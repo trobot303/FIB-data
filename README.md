@@ -30,10 +30,22 @@ pip install -r requirements.txt
    that otherwise appears).
 
    ```bash
-   python -m fib_rf_seg train --image data/LCO60_Processed001.tiff \
-       --scribbles data/labels/LCO60_Processed001_scribbles.json \
-       --auto-seeds --dense --pore-level auto --max-per-class 40000 --model models/rf_v3.joblib
+   python -m fib_rf_seg train \
+       --image data/LCO60_Processed001.tiff --scribbles data/labels/LCO60_Processed001_scribbles.json \
+       --image data/LCO60_Processed451.tiff \
+       --image data/LCO60_Processed564.tiff \
+       --image data/LCO60_Processed632.tiff \
+       --auto-seeds --dense --pore-level auto --lo 2500 --hi 50000 --model models/rf_v4.joblib
    ```
+
+   **Grey normalisation.** `--lo/--hi` map raw grey values to 0–1 for every
+   slice with the same bounds (here the 0.1/99.9 percentiles of a clean slice
+   of this stack; raw medians are pore ≈ 11000, LCO ≈ 23000, LLZTO ≈ 41000).
+   The bounds are stored in the model and reused by `predict`/`review`.
+   Without them each slice is scaled by its own percentiles, which the
+   charging artefacts on slice 001 distort (its LLZTO landed at 0.71 instead
+   of 0.87), inflating LLZTO grains by 1–2 px on the other slices.  Use
+   per-slice scaling only for a stack whose brightness really drifts along z.
 
    **Pore edge position.** A watershed (and a pixel classifier trained on it)
    puts each pore edge at the midpoint of the grey transition, which is 0.28
@@ -46,12 +58,17 @@ pip install -r requirements.txt
    LLZTO); the level only moves the edge within a `--band` (default 3 px)
    around it.  Lower `L` shrinks pores, higher `L` grows them.  The same option
    on `predict`/`review` re-applies the rule after classification.
+   `--solid-level L` does the same for the LCO/LLZTO edge (`auto` = multi-Otsu
+   threshold, 0.65).  The watershed already puts that edge within half a pixel
+   of 0.65, so it is off by default, but because LLZTO grains are small that
+   half pixel is worth about 5 % of the image area (LLZTO 30.0 % → 24.9 % on
+   slice 451 with `--solid-level auto`).
 
 2. **Review** the prediction (grey, overlay, labels, confidence map):
 
    ```bash
-   python -m fib_rf_seg review --model models/rf_v3.joblib --image data/LCO60_Processed001.tiff \
-       --pore-level auto --min-size 20 --out docs/review_v3_full.png [--region Y0 Y1 X0 X1]
+   python -m fib_rf_seg review --model models/rf_v4.joblib --image data/LCO60_Processed001.tiff \
+       --pore-level auto --min-size 20 --out docs/review_v4_001.png [--region Y0 Y1 X0 X1]
    ```
 
 3. **Correct**: paint scribbles where the model is wrong and retrain.
@@ -60,7 +77,7 @@ pip install -r requirements.txt
 
    ```bash
    python -m fib_rf_seg.label --image data/LCO60_Processed001.tiff \
-       --out data/labels/LCO60_Processed001_scribbles.json --model models/rf_v3.joblib
+       --out data/labels/LCO60_Processed001_scribbles.json --model models/rf_v4.joblib
    ```
 
    Keys `1`/`2`/`3` choose the phase, drag to paint, `[`/`]` change the brush,
@@ -71,13 +88,13 @@ pip install -r requirements.txt
 4. **Predict** a whole stack (a directory of slices or one file):
 
    ```bash
-   python -m fib_rf_seg predict --model models/rf_v3.joblib --input /path/to/slices \
+   python -m fib_rf_seg predict --model models/rf_v4.joblib --input /path/to/slices \
        --out results/stack --pore-level auto --min-size 20 [--save-proba]
    ```
 
-   Output: `<slice>_labels.tif` per slice plus `fractions.json`.  Each slice is
-   normalised with its own 0.1/99.9 percentiles by default (robust against
-   brightness drift along z); pass `--lo/--hi` for fixed grey bounds.
+   Output: `<slice>_labels.tif` per slice plus `fractions.json`.  The grey
+   bounds stored in the model are used; `--lo/--hi` override them, and a model
+   trained without bounds scales each slice by its own 0.1/99.9 percentiles.
 
 ## Scribble file format
 
@@ -101,18 +118,26 @@ the dark-grey pore back walls "pore" rather than LCO.
 Half of each class's training samples are drawn within 4 px of a phase
 boundary (`--boundary-frac`, default 0.5) so edges are learnt precisely.
 
-## Current state (slice LCO60_Processed001)
+## Current state (sample LCO60, slices 001, 451, 564, 632)
 
-| model | pore edge | pore | LCO | LLZTO |
-|-------|-----------|-----:|----:|------:|
-| rf_v2 | transition midpoint | 36.1 % | 40.3 % | 23.6 % |
-| rf_v3 | grey level 0.256 (`--pore-level auto`) | 29.3 % | 43.4 % | 27.4 % |
+Model `rf_v4`: auto-seeds on all four slices + 8 scribbles on 001, dense
+watershed labels with pore edges at the multi-Otsu level, fixed grey bounds
+2500–50000, 200 trees, OOB accuracy 0.947.
 
-v2 pores were inflated by 1–2 px all round; `docs/pore_edge_v2_vs_v3.png`
-shows both contours on two zoomed regions, `docs/overlay_v3_full.png` and
-`docs/review_v3_full.png` the whole slice with v3.  Known issue: bright
-charging artefacts at the top corners of the slice are labelled LLZTO; crop
-them away.
+| slice | pore | LCO | LLZTO |
+|------:|-----:|----:|------:|
+| 001 | 29.4 % | 42.4 % | 28.1 % |
+| 451 | 28.8 % | 41.2 % | 30.0 % |
+| 564 | 31.2 % | 40.2 % | 28.6 % |
+| 632 | 29.5 % | 40.9 % | 29.5 % |
 
-Trained models are not committed (30 MB); the train command above reproduces
-them deterministically (`random_state=0`).
+`docs/overlay_v4_all.png` shows all four slices with their overlays,
+`docs/review_v4_<slice>.png` the per-slice review figures, and
+`docs/pore_edge_v2_vs_v3.png` the pore-edge fix on zoomed regions (v2 pores
+were 1–2 px too wide).  Known issue: bright charging artefacts at the top
+corners of slice 001 are labelled LLZTO; crop them away.
+
+History: v2 = watershed edges (pore 36 % on slice 001, inflated); v3 = pore
+edges at the multi-Otsu level (29 %); v4 = v3 retrained on four slices with
+fixed grey bounds.  Trained models are not committed (30 MB); the train
+command above reproduces them deterministically (`random_state=0`).

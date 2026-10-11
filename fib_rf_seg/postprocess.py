@@ -50,11 +50,40 @@ def snap_to_edges(lab: np.ndarray, im_norm: np.ndarray, erode: int = 2, smooth: 
     return out.astype(np.uint8)
 
 
-def pore_level_auto(im_norm: np.ndarray, smooth: float = 1.0) -> float:
-    """Multi-Otsu pore/solid threshold of the (smoothed) slice, in normalised grey units."""
+def otsu_levels(im_norm: np.ndarray, smooth: float = 1.0) -> tuple[float, float]:
+    """Multi-Otsu (pore/solid, LCO/LLZTO) thresholds of the smoothed slice, normalised grey units."""
     from skimage.filters import threshold_multiotsu
     g = ndi.gaussian_filter(im_norm, smooth) if smooth > 0 else im_norm
-    return float(threshold_multiotsu(g, classes=3)[0])
+    t1, t2 = threshold_multiotsu(g, classes=3)
+    return float(t1), float(t2)
+
+
+def pore_level_auto(im_norm: np.ndarray, smooth: float = 1.0) -> float:
+    return otsu_levels(im_norm, smooth)[0]
+
+
+def solid_level_auto(im_norm: np.ndarray, smooth: float = 1.0) -> float:
+    return otsu_levels(im_norm, smooth)[1]
+
+
+def place_solid_edges(lab: np.ndarray, im_norm: np.ndarray, level: float, band: int = 3,
+                      smooth: float = 1.0) -> np.ndarray:
+    """Place LCO/LLZTO edges at a fixed grey level (same idea as :func:`trim_pores`).
+
+    Within ``band`` px of an LCO/LLZTO boundary a pixel is LLZTO iff its smoothed
+    grey value is at least ``level``, else LCO.  Pore pixels are never changed.
+    """
+    g = ndi.gaussian_filter(im_norm, smooth) if smooth > 0 else im_norm
+    lco, llz = lab == 2, lab == 3
+    if not lco.any() or not llz.any():
+        return lab.copy()
+    d_lco = ndi.distance_transform_edt(~lco)
+    d_llz = ndi.distance_transform_edt(~llz)
+    zone = (lco & (d_llz <= band)) | (llz & (d_lco <= band))
+    out = lab.copy()
+    out[zone & (g >= level)] = 3
+    out[zone & (g < level)] = 2
+    return out
 
 
 def trim_pores(lab: np.ndarray, im_norm: np.ndarray, level: float, band: int = 3,
