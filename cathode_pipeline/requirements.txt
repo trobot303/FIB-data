@@ -1,0 +1,19 @@
+# Pinned for Python 3.10 - 3.12 (torch has no wheels for 3.13/3.14 at these versions).
+# Install:  python -m pip install -r requirements.txt
+# GPU:      install torch first with the CUDA index matching the workstation driver, e.g.
+#           pip install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu121
+#           then re-run the line above (pip keeps the already-installed torch).
+numpy==1.26.4
+scipy==1.13.1
+scikit-image==0.24.0
+tifffile==2024.8.30
+imagecodecs==2024.6.1
+pyyaml==6.0.2
+matplotlib==3.9.2
+pandas==2.2.3
+porespy==2.4.1
+taufactor==1.1.0
+torch==2.4.1
+psutil==6.0.0
+tqdm==4.66.5
+pytest==8.3.3

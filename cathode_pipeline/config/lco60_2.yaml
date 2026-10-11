@@ -1,0 +1,99 @@
+# Full-resolution run of processed_LCO60_2 on the local machine (33 GB RAM, no GPU).
+# Pores: only the volume fraction is analysed (no connectivity / interface / profile
+# quantities beyond volume fraction). Results go to results_lco60_2/.
+schema_version: 1
+
+project:
+  name: lco60_2
+  description: "processed_LCO60_2 full run, pores limited to volume fraction"
+
+paths:
+  data_root: "../.."
+  output_root: "../results_lco60_2"
+  log_dir: "../results_lco60_2/logs"
+
+runtime:
+  log_level: INFO
+  n_workers: 6
+  device: auto
+  memory_log: true
+  label_format: npy
+  random_seed: 0
+
+voxel:
+  size_nm: 50.0
+  through_thickness_axis: y
+  current_collector_face: min
+
+samples:
+  - name: LCO60_2
+    nominal_lco_vol_fraction: 0.60
+    input_dir: processed_LCO60_2
+    pattern: "slice-*.tif"
+    slice_range: [null, null]
+    crop: {z: [null, null], y: [40, 1390], x: [320, 2600]}   # excludes the dark side bands (they shift with z) and the bright bottom strip
+    downsample: 2                 # local test at 100 nm voxels; full resolution needs ~16 GB for connectivity
+    overrides: {}
+
+segmentation:
+  normalize: {method: percentile, percentiles: [0.1, 99.9], per_slice: true}   # brightness drifts ~30% along z
+  preprocess: {filter: none, sigma: 1.0, size: 3, in_3d: true}
+  thresholds: {method: multi_otsu, n_classes: 3, manual: [null, null], histogram_subsample: 8}
+  intensity_order: [pore, lco, llzto]
+  postprocess:
+    min_object_voxels: {pore: 27, lco: 125, llzto: 125}
+    fill_holes: {enabled: true, max_voxels: 1000}
+    majority_filter_radius: 0
+    chunk_z: 96
+    chunk_margin: 16
+  qc: {overlay_slices: [0.25, 0.5, 0.75], save_histogram: true}
+
+connectivity:
+  structure: 6
+  reference_faces: {lco: [collector], llzto: [separator]}   # no entry for pore -> not analysed
+  report_largest_n_clusters: 10
+  save_connected_labels: true
+
+surface:
+  method: marching_cubes
+  marching_cubes: {smoothing_sigma: 0.7, step_size: 1}
+  voxel_faces: {correction_factor: 0.667}
+  interfaces: [[lco, llzto]]
+  active_requires_connected: true
+  chunk_z: 48
+
+tortuosity:
+  backend: taufactor
+  phases: [lco, llzto]
+  directions: [x, y, z]
+  use_connected_only: true
+  taufactor: {convergence: 0.02, max_iterations: 20000, check_every: 100}
+  porespy: {solver_tol: 1.0e-6}
+  downsample: 2                 # on top of the sample downsample: 200 nm voxels for the CPU solver
+
+grains:
+  phases: [lco, llzto]
+  method: watershed_hmax
+  snow: {sigma: 0.4, r_max: 4}
+  watershed_hmax: {h: 2.0}
+  min_grain_voxels: 64
+  measure: {equivalent_diameter: true, sphericity: true, n_bins_size_distribution: 40}
+  downsample: 1
+
+profiles:
+  slab_thickness_um: 1.0
+  quantities: [volume_fraction, connected_fraction, interface_density, grain_count]
+  phases: [pore, lco, llzto]
+  normalize_position: true
+
+report:
+  compare_with_nominal: true
+  reference_values_csv: null
+  figures: {format: png, dpi: 150, style: default}
+  tables: {float_format: "%.4f"}
+
+plotting:
+  colors: {pore: "#1f1f1f", lco: "#d95f02", llzto: "#1b9e77"}
+  sample_colors: {LCO60_2: "#ee6677"}
+  interface_colors: {lco-llzto: "#7570b3", lco-pore: "#e6ab02", llzto-pore: "#66a61e"}
+  overlay_alpha: 0.45
