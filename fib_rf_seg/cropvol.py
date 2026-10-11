@@ -95,7 +95,7 @@ def cmd_crop(a):
         if stacks is not None:
             for s, arrs in stacks.items():
                 name = "labels_stack.tif" if s == "labels" else f"{s}_stack.tif"
-                tifffile.imwrite(str(out / name), np.stack(arrs), compression="zlib")
+                tifffile.imwrite(str(out / name), np.stack(arrs), compression="zlib", photometric="minisblack")
         with open(out / "crop_info.json", "w") as fh:
             json.dump({"source": str(d), "source_size_zyx": [n, h, w], "target_size_zyx": [Z, Y, X],
                        "z_start": z0, "y_start": y0, "x_start": x0, "voxel_um": a.px}, fh, indent=2)

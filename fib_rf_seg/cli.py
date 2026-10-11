@@ -194,9 +194,9 @@ def cmd_predict(a):
         for name, fr in summary.items():
             fh.write(f"{name},{fr[1]:.5f},{fr[2]:.5f},{fr[3]:.5f}\n")
     if stacks is not None:
-        tifffile.imwrite(str(out / "labels_stack.tif"), np.stack(stacks[0]), compression="zlib")
+        tifffile.imwrite(str(out / "labels_stack.tif"), np.stack(stacks[0]), compression="zlib", photometric="minisblack")
         for k in PHASES:
-            tifffile.imwrite(str(out / f"{PHASES[k]}_stack.tif"), np.stack(stacks[k]), compression="zlib")
+            tifffile.imwrite(str(out / f"{PHASES[k]}_stack.tif"), np.stack(stacks[k]), compression="zlib", photometric="minisblack")
         print(f"[predict] wrote labels_stack.tif and one multipage stack per phase to {out}")
     mean = {PHASES[k]: float(np.mean([fr[k] for fr in summary.values()])) for k in PHASES}
     print("[predict] mean fractions over stack: " + ", ".join(f"{n}={v:.3f}" for n, v in mean.items()))

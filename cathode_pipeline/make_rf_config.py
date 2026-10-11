@@ -36,7 +36,10 @@ for name in SAMPLES:
         print(f"skip {name}: {d} has no complete pore/LCO/LLZTO stacks")
         continue
     with tifffile.TiffFile(d / MASKS["pore"]) as t:
-        z = len(t.pages); h, w = t.pages[0].shape[:2]
+        shp = t.series[0].shape            # (Z, Y, X) for a multipage stack
+    if len(shp) != 3:
+        raise SystemExit(f"{name}: expected a Z x Y x X stack, got shape {shp}")
+    z, h, w = shp
     found[name] = (z, h, w)
     print(f"{name}: {z} x {h} x {w}")
 if not found:
