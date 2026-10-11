@@ -85,16 +85,49 @@ pip install -r requirements.txt
    override auto-seeds wherever they overlap, so a few strokes on a mistake are
    enough.  Commit the JSON and retrain (step 1).
 
-4. **Predict** a whole stack (a directory of slices or one file):
+4. **Predict** a whole stack (a directory of slices or one file) and export
+   each phase separately:
 
    ```bash
-   python -m fib_rf_seg predict --model models/rf_v4.joblib --input /path/to/slices \
-       --out results/stack --pore-level auto --min-size 20 [--save-proba]
+   python -m fib_rf_seg predict --model models/rf_lco60.joblib --input /path/to/slices \
+       --out /path/to/output --pore-level auto --min-size 20 --per-phase --stack
    ```
 
-   Output: `<slice>_labels.tif` per slice plus `fractions.json`.  The grey
-   bounds stored in the model are used; `--lo/--hi` override them, and a model
-   trained without bounds scales each slice by its own 0.1/99.9 percentiles.
+   Output layout:
+
+   | path | content |
+   |------|---------|
+   | `labels/<slice>_labels.tif` | 8-bit label image, 1 = pore, 2 = LCO, 3 = LLZTO |
+   | `pore/<slice>_pore.tif`, `LCO/<slice>_LCO.tif`, `LLZTO/<slice>_LLZTO.tif` | one binary mask (0/255) per phase and slice (`--per-phase`; `--binary-value 1` for 0/1) |
+   | `pore_stack.tif`, `LCO_stack.tif`, `LLZTO_stack.tif`, `labels_stack.tif` | the same as one multipage TIFF per phase (`--stack`) |
+   | `fractions.csv`, `fractions.json` | area fraction of each phase per slice |
+
+   The per-phase folders are what `cathode_analysis`' pre-segmented mode
+   expects (one binary stack per phase, slices sorted by trailing number).
+   The run resumes from existing `labels/` files if interrupted
+   (`--overwrite` recomputes).  The grey bounds stored in the model are used;
+   `--lo/--hi` override them, and a model trained without bounds scales each
+   slice by its own 0.1/99.9 percentiles.  Speed is about 9 s per 1702×700
+   slice on 4 cores.
+
+## Running on the LCO60 stack (Windows)
+
+`models/rf_lco60.joblib` is committed (100 trees, depth 14, 6 MB; it agrees
+with the full-size `rf_v4` on 99.4 % of pixels).  In a terminal in the
+repository folder:
+
+```bat
+pip install -r requirements.txt
+python -m fib_rf_seg predict --model models\rf_lco60.joblib ^
+    --input "C:\Users\303je\Desktop\work\PlasmaFIB_A970 Data\A970_6040\processed_LCO60" ^
+    --out "C:\Users\303je\Desktop\work\PlasmaFIB_A970 Data\A970_6040\processed_LCO60_segmented" ^
+    --pore-level auto --min-size 20 --per-phase --stack
+```
+
+or double-click `scripts\segment_lco60_stack.bat`, which runs the same
+command.  The quotes around the paths are required because of the space in
+`PlasmaFIB_A970 Data`.  Drop `--stack` if the stack is too large to hold in
+memory as four uint8 volumes (about 1.2 GB per 1000 slices each).
 
 ## Scribble file format
 
@@ -120,9 +153,10 @@ boundary (`--boundary-frac`, default 0.5) so edges are learnt precisely.
 
 ## Current state (sample LCO60, slices 001, 451, 564, 632)
 
-Model `rf_v4`: auto-seeds on all four slices + 8 scribbles on 001, dense
-watershed labels with pore edges at the multi-Otsu level, fixed grey bounds
-2500–50000, 200 trees, OOB accuracy 0.947.
+Model `rf_v4` (and its committed compact twin `rf_lco60`): auto-seeds on all
+four slices + 8 scribbles on 001, dense watershed labels with pore edges at
+the multi-Otsu level, fixed grey bounds 2500–50000, 200 trees, OOB accuracy
+0.947.
 
 | slice | pore | LCO | LLZTO |
 |------:|-----:|----:|------:|
@@ -139,5 +173,6 @@ corners of slice 001 are labelled LLZTO; crop them away.
 
 History: v2 = watershed edges (pore 36 % on slice 001, inflated); v3 = pore
 edges at the multi-Otsu level (29 %); v4 = v3 retrained on four slices with
-fixed grey bounds.  Trained models are not committed (30 MB); the train
-command above reproduces them deterministically (`random_state=0`).
+fixed grey bounds.  Only `rf_lco60.joblib` is committed; the train command
+above (with `--trees 100 --max-depth 14` for the compact one) reproduces the
+models deterministically (`random_state=0`).

@@ -130,24 +130,61 @@ def _postprocess(lab, im, a):
 
 
 def cmd_predict(a):
+    import tifffile
+
     rf, sigmas, norm = load_model(a.model)
     lo = a.lo if a.lo is not None else norm.get("lo")
     hi = a.hi if a.hi is not None else norm.get("hi")
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     files = list_slices(a.input)
+    if not files:
+        sys.exit(f"no .tif/.tiff slices found in {a.input}")
+    print(f"[predict] {len(files)} slices from {a.input}; grey bounds lo={lo} hi={hi}")
+    (out / "labels").mkdir(exist_ok=True)
+    phase_dirs = {}
+    if a.per_phase:
+        for k, name in PHASES.items():
+            phase_dirs[k] = out / name
+            phase_dirs[k].mkdir(exist_ok=True)
+    hi_val = 255 if a.binary_value == 255 else 1
+    stacks = {k: [] for k in list(PHASES) + [0]} if a.stack else None
     summary = {}
-    for f in files:
-        im = _load_norm(f, lo, hi)
-        lab, proba = predict(rf, im, sigmas)
-        lab = _postprocess(lab, im, a)
-        write_labels(out / f"{f.stem}_labels.tif", lab)
-        if a.save_proba:
-            np.save(out / f"{f.stem}_proba.npy", proba)
+    t_start = time.time()
+    for i, f in enumerate(files, 1):
+        if a.overwrite or not (out / "labels" / f"{f.stem}_labels.tif").exists():
+            im = _load_norm(f, lo, hi)
+            lab, proba = predict(rf, im, sigmas)
+            lab = _postprocess(lab, im, a)
+            write_labels(out / "labels" / f"{f.stem}_labels.tif", lab)
+            if a.save_proba:
+                np.save(out / f"{f.stem}_proba.npy", proba)
+        else:
+            lab = read_labels(out / "labels" / f"{f.stem}_labels.tif")
+        for k, d in phase_dirs.items():
+            tifffile.imwrite(str(d / f"{f.stem}_{PHASES[k]}.tif"), ((lab == k) * hi_val).astype(np.uint8))
+        if stacks is not None:
+            stacks[0].append(lab)
+            for k in PHASES:
+                stacks[k].append(((lab == k) * hi_val).astype(np.uint8))
         fr = phase_fractions(lab)
         summary[f.name] = fr
-        print(f"[predict] {f.name}: " + ", ".join(f"{PHASES[k]}={fr[k]:.3f}" for k in PHASES))
+        el = time.time() - t_start
+        eta = el / i * (len(files) - i)
+        print(f"[predict] {i}/{len(files)} {f.name}: " + ", ".join(f"{PHASES[k]}={fr[k]:.3f}" for k in PHASES)
+              + f"   ({el/i:.1f} s/slice, ETA {eta/60:.1f} min)", flush=True)
     with open(out / "fractions.json", "w") as fh:
         json.dump(summary, fh, indent=2)
+    with open(out / "fractions.csv", "w") as fh:
+        fh.write("slice,pore,LCO,LLZTO\n")
+        for name, fr in summary.items():
+            fh.write(f"{name},{fr[1]:.5f},{fr[2]:.5f},{fr[3]:.5f}\n")
+    if stacks is not None:
+        tifffile.imwrite(str(out / "labels_stack.tif"), np.stack(stacks[0]), compression="zlib")
+        for k in PHASES:
+            tifffile.imwrite(str(out / f"{PHASES[k]}_stack.tif"), np.stack(stacks[k]), compression="zlib")
+        print(f"[predict] wrote labels_stack.tif and one multipage stack per phase to {out}")
+    mean = {PHASES[k]: float(np.mean([fr[k] for fr in summary.values()])) for k in PHASES}
+    print("[predict] mean fractions over stack: " + ", ".join(f"{n}={v:.3f}" for n, v in mean.items()))
 
 
 def cmd_review(a):
@@ -201,6 +238,10 @@ def main(argv=None):
     pr.add_argument("--solid-level", default=None, help="re-place LCO/LLZTO edges at this grey level (0-1) or 'auto' (multi-Otsu)")
     pr.add_argument("--band", type=int, default=3)
     pr.add_argument("--snap", type=int, default=-1, metavar="ERODE", help="snap boundaries to grey edges by watershed (erode radius for markers, e.g. 2; -1 = off)")
+    pr.add_argument("--per-phase", action="store_true", help="also write one binary mask per phase and slice into <out>/pore, <out>/LCO, <out>/LLZTO")
+    pr.add_argument("--stack", action="store_true", help="also write one multipage TIFF per phase (and labels_stack.tif) for the whole stack")
+    pr.add_argument("--binary-value", type=int, default=255, choices=(1, 255), help="foreground value of the binary masks")
+    pr.add_argument("--overwrite", action="store_true", help="recompute slices whose labels already exist in <out>/labels (default: resume)")
     pr.add_argument("--save-proba", action="store_true")
     _norm_args(pr)
     pr.set_defaults(func=cmd_predict)
