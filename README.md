@@ -148,7 +148,7 @@ and 0.875, which makes the model independent of the stack's contrast and of
 drift along z.  With these options the committed model agrees on 98.4 % of
 pixels with a model trained on this slice itself (`docs/LCO60_2_slice-4_overlay.png`):
 pore 22.9 %, LCO 48.6 %, LLZTO 28.5 % in the crop.  `scripts\\segment_lco60_2_stack.bat`
-runs it; set its `INPUT` path first.
+runs it on `...\\FIB data\\processed_LCO60_2`.
 
 ## Running on the LCO60 stack (Windows)
 

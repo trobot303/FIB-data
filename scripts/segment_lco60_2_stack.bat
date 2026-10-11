@@ -6,8 +6,8 @@ REM                             Order is Y0 Y1 X0 X1 (end exclusive).  Adjust if
 REM  --smooth 1.5             : the slices are raw and noisy (noise std ~3400 vs ~460 in the processed LCO60 stack).
 REM  --norm phase             : per-slice grey normalisation anchored on the pore and LLZTO levels; this stack has
 REM                             a different contrast from LCO60 and its brightness drifts along z.
-set INPUT=C:\Users\303je\Desktop\work\PlasmaFIB_A970 Data\FIB data\LCO60_2
-set OUTPUT=C:\Users\303je\Desktop\work\PlasmaFIB_A970 Data\FIB data\LCO60_2_segmented
+set INPUT=C:\Users\303je\Desktop\work\PlasmaFIB_A970 Data\FIB data\processed_LCO60_2
+set OUTPUT=C:\Users\303je\Desktop\work\PlasmaFIB_A970 Data\FIB data\processed_LCO60_2_segmented
 
 python -m fib_rf_seg predict --model models\rf_lco60.joblib --input "%INPUT%" --out "%OUTPUT%" ^
     --crop 400 1100 600 2300 --smooth 1.5 --norm phase --pore-level auto --min-size 20 --per-phase --stack
