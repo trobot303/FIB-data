@@ -45,6 +45,38 @@ def normalise(im: np.ndarray, lo: float | None = None, hi: float | None = None,
     return np.clip(out, 0.0, 1.0).astype(np.float32)
 
 
+# Normalised grey medians of the LCO60 training data (bounds 2500-50000); used as
+# anchors by normalise_phases so that other stacks land on the same scale.
+PHASE_ANCHORS = {"pore": 0.18, "LLZTO": 0.875}
+
+
+def normalise_phases(im: np.ndarray, smooth: float = 1.0, anchors: dict | None = None) -> np.ndarray:
+    """Map grey values to [0, 1] so that the pore and LLZTO medians of *this slice*
+    land on the same values as in the training data.
+
+    The medians come from a multi-Otsu split of the smoothed slice, so the
+    mapping adapts to brightness/contrast drift along z and between stacks.
+    """
+    from scipy import ndimage as ndi
+    from skimage.filters import threshold_multiotsu
+    anchors = anchors or PHASE_ANCHORS
+    g = ndi.gaussian_filter(im, smooth) if smooth > 0 else im
+    t1, t2 = threshold_multiotsu(g, classes=3)
+    m_pore, m_llz = float(np.median(g[g < t1])), float(np.median(g[g >= t2]))
+    a_p, a_l = anchors["pore"], anchors["LLZTO"]
+    scale = (a_l - a_p) / max(m_llz - m_pore, 1e-6)
+    out = a_p + (im - m_pore) * scale
+    return np.clip(out, 0.0, 1.0).astype(np.float32)
+
+
+def crop(im: np.ndarray, box) -> np.ndarray:
+    """Crop to (y0, y1, x0, x1); None leaves the image unchanged."""
+    if box is None:
+        return im
+    y0, y1, x0, x1 = box
+    return im[y0:y1, x0:x1]
+
+
 def read_labels(path: str | Path) -> np.ndarray:
     """Read a label image (0 = unlabelled, 1 = pore, 2 = LCO, 3 = LLZTO) as uint8."""
     path = Path(path)
