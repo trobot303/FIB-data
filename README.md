@@ -110,6 +110,27 @@ pip install -r requirements.txt
    slice by its own 0.1/99.9 percentiles.  Speed is about 9 s per 1702×700
    slice on 4 cores.
 
+## Other stacks of the same sample type
+
+The committed model was tested on `data/stackB/slice_0011.tif`, a slice from a
+different, larger (2800×1201) and un-denoised volume of the same cathode type.
+Its raw grey levels match LCO60 (phase medians 11.7k / 23.7k / 43.8k vs
+11.2k / 23.2k / 44.9k), so the stored bounds apply.  Because the slice is
+noisy, pre-smooth it with `--smooth 1.0` (Gaussian sigma in px, applied before
+normalisation):
+
+```bash
+python -m fib_rf_seg predict --model models/rf_lco60.joblib --input /path/to/other_stack \
+    --out /path/to/other_stack_segmented --smooth 1.0 --pore-level auto --min-size 20 --per-phase --stack
+```
+
+A model retrained on that slice alone agrees with the LCO60 model on 97.6 % of
+pixels; the difference is a 1 px wider LLZTO edge in the retrained one.  See
+`docs/stackB_slice_0011_overlay.png`.  For a new stack, check that (a) the
+raw phase grey levels are similar (`--lo/--hi` otherwise) and (b) the pixel
+size is similar, since feature scales are in pixels; then inspect one review
+figure before running the whole volume.
+
 ## Running on the LCO60 stack (Windows)
 
 `models/rf_lco60.joblib` is committed (100 trees, depth 14, 6 MB; it agrees
