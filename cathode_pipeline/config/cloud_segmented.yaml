@@ -13,7 +13,7 @@ project:
   description: "RF-segmented LCO50, LCO60, LCO60_2, LCO70; identical analysis volume; pores = volume fraction only"
 
 paths:
-  data_root: "../../data/segmented"           # <sample>/pores.tiff, LCO.tiff, LLZTO.tiff (from scripts/labels_to_masks.py)
+  data_root: "../../data/segmented"           # <sample>/pore_stack.tif, LCO_stack.tif, LLZTO_stack.tif (255 = phase)
   output_root: "../../results_pipeline"
   log_dir: "../../results_pipeline/logs"
 
@@ -38,7 +38,7 @@ samples:
   - name: LCO50
     nominal_lco_vol_fraction: 0.50
     input_dir: LCO50
-    masks: {pore: pores.tiff, lco: LCO.tiff, llzto: LLZTO.tiff}
+    masks: {pore: pore_stack.tif, lco: LCO_stack.tif, llzto: LLZTO_stack.tif}
     slice_range: [null, null]
     crop: {z: [0, 700], y: [0, 700], x: [0, 1700]}
     downsample: 1
@@ -47,7 +47,7 @@ samples:
   - name: LCO60
     nominal_lco_vol_fraction: 0.60
     input_dir: LCO60
-    masks: {pore: pores.tiff, lco: LCO.tiff, llzto: LLZTO.tiff}
+    masks: {pore: pore_stack.tif, lco: LCO_stack.tif, llzto: LLZTO_stack.tif}
     slice_range: [null, null]
     crop: {z: [0, 700], y: [0, 700], x: [1, 1701]}    # LCO60 slices are 1702 wide
     downsample: 1
@@ -56,7 +56,7 @@ samples:
   - name: LCO60_2
     nominal_lco_vol_fraction: 0.60
     input_dir: LCO60_2
-    masks: {pore: pores.tiff, lco: LCO.tiff, llzto: LLZTO.tiff}
+    masks: {pore: pore_stack.tif, lco: LCO_stack.tif, llzto: LLZTO_stack.tif}
     slice_range: [null, null]
     crop: {z: [0, 700], y: [0, 700], x: [0, 1700]}
     downsample: 1
@@ -65,7 +65,7 @@ samples:
   - name: LCO70
     nominal_lco_vol_fraction: 0.70
     input_dir: LCO70
-    masks: {pore: pores.tiff, lco: LCO.tiff, llzto: LLZTO.tiff}
+    masks: {pore: pore_stack.tif, lco: LCO_stack.tif, llzto: LLZTO_stack.tif}
     slice_range: [null, null]
     crop: {z: [0, 700], y: [0, 700], x: [0, 1700]}
     downsample: 1
