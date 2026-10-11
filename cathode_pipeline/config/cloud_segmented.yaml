@@ -71,7 +71,6 @@ samples:
     downsample: 1
     overrides: {}
 
-segmentation: {masks: {priority: [llzto, pore, lco]}}} to give pores the overlap
 
 segmentation:
   # ---- used only for samples that provide `masks` -------------------------

@@ -4,3 +4,6 @@ results/
 models/*
 !models/rf_lco60.joblib
 !models/rf_all.joblib
+cathode_pipeline/.venv/
+cathode_pipeline/results*/
+results_pipeline/

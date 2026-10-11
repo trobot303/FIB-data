@@ -206,6 +206,42 @@ which slices to keep; the x/y window is cut from the centre of each slice
 recording the offsets.  `scripts\\crop_volumes_to_LCO60_2.bat` runs this for
 the three samples.
 
+## Running the 3D analysis (cathode_analysis) in the cloud
+
+`cathode_pipeline/` is the `cathode_analysis` workstation package (v2).  It can
+run in a Claude cloud session (4 cores, 15 GB RAM, no GPU) on the
+random-forest segmentations.  Only PyPI and GitHub are reachable from the
+session, so the data travel through the repository:
+
+1. **On the workstation**, after `predict --stack` (and `cropvol crop --stack`
+   for the volumes trimmed to the LCO60_2 size), run
+   `scripts\\push_label_stacks.bat`.  It copies `labels_stack.tif` of the four
+   samples from `...\\FIB data\\segmented\\` into `data/segmented/<sample>/`
+   and pushes them (zlib-compressed label volumes, roughly 50–60 MB per
+   700-slice sample).
+2. **In the session**: `bash scripts/setup_cloud_pipeline.sh` builds the
+   virtual environment (`cathode_pipeline/requirements_cloud.txt`; the pinned
+   `requirements.txt` is for Python 3.10–3.12 on the workstation) and runs the
+   50 pipeline tests.  Then, per sample,
+   `python scripts/labels_to_masks.py data/segmented/<sample>/labels_stack.tif`
+   writes the `pores.tiff` / `LCO.tiff` / `LLZTO.tiff` mask stacks the mask
+   mode expects, and
+
+   ```bash
+   cd cathode_pipeline && . .venv/bin/activate
+   python -m cathode_analysis.cli validate --config config/cloud_segmented.yaml
+   python -m cathode_analysis.cli run      --config config/cloud_segmented.yaml --stage all
+   ```
+
+   `config/cloud_segmented.yaml` is `workstation_segmented.yaml` with the four
+   samples, `device: cpu`, `n_workers: 4` and `tortuosity.downsample: 4`;
+   set `analysis_volume.shape_zyx` and the sample crops to the common volume
+   before running.  Results land in `results_pipeline/` (summary tables,
+   per-sample JSON/CSV, figures) and are committed back to the repository.
+
+Verified in the session: all 50 tests pass; a 3-slice LCO70 volume runs
+through every stage in under 2 minutes.
+
 ## Running on the LCO60 stack (Windows)
 
 `models/rf_lco60.joblib` is committed (100 trees, depth 14, 6 MB; it agrees
