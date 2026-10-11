@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 
 from . import PHASES
-from .io import list_slices, normalise, read_labels, read_slice, write_labels
+from .io import crop, list_slices, normalise, normalise_phases, read_labels, read_slice, write_labels
 from .features import DEFAULT_SIGMAS
 from .model import TrainingSet, load_model, predict, save_model, train
 from .postprocess import clean_labels, phase_fractions, place_solid_edges, pore_level_auto, snap_to_edges, solid_level_auto, trim_pores
@@ -32,13 +32,19 @@ def _norm_args(p):
     p.add_argument("--lo", type=float, default=None, help="fixed lower grey bound (default: 0.1th percentile per slice)")
     p.add_argument("--hi", type=float, default=None, help="fixed upper grey bound (default: 99.9th percentile per slice)")
     p.add_argument("--smooth", type=float, default=None, help="Gaussian sigma (px) applied to the raw slice before everything else, for noisy (un-denoised) stacks")
+    p.add_argument("--norm", choices=("bounds", "phase"), default=None,
+                   help="'bounds': linear map with --lo/--hi (or per-slice percentiles); 'phase': per-slice map that puts the pore and LLZTO medians on the training scale (robust to drift along z and to other stacks)")
+    p.add_argument("--crop", type=int, nargs=4, metavar=("Y0", "Y1", "X0", "X1"), default=None,
+                   help="crop every slice to rows Y0:Y1 and columns X0:X1 before processing (pixel indices, end exclusive)")
 
 
-def _load_norm(path, lo, hi, smooth=None):
-    im = read_slice(path)
+def _load_norm(path, lo, hi, smooth=None, norm="bounds", box=None):
+    im = crop(read_slice(path), box)
     if smooth:
         from scipy import ndimage as ndi
         im = ndi.gaussian_filter(im, smooth)
+    if norm == "phase":
+        return normalise_phases(im)
     return normalise(im, lo, hi)
 
 
@@ -111,7 +117,7 @@ def cmd_train(a):
     labs = a.labels or [None] * len(a.image)
     for img, s, l in zip(a.image, scr, labs):
         print(f"[train] {img}")
-        im = _load_norm(img, a.lo, a.hi, a.smooth)
+        im = _load_norm(img, a.lo, a.hi, a.smooth, a.norm or "bounds", a.crop)
         lab = build_training_labels(im, s, l, a.auto_seeds, a.auto_erode, a.auto_margin, a.dense, a.drop_boundary,
                                     a.pore_level, a.band, a.solid_level)
         print("  labels used: " + ", ".join(f"{PHASES[k]}={int((lab == k).sum())}" for k in PHASES))
@@ -121,7 +127,7 @@ def cmd_train(a):
     mf = None if mf == "all" else (float(mf) if mf.replace(".", "", 1).isdigit() else mf)
     rf = train(ts, n_estimators=a.trees, max_depth=a.max_depth, max_features=mf)
     print(f"[train] {len(ts.arrays()[1])} samples, {a.trees} trees, {time.time() - t0:.1f}s, OOB accuracy {rf.oob_score_:.4f}")
-    save_model(rf, a.model, sigmas=sigmas, norm={"lo": a.lo, "hi": a.hi, "smooth": a.smooth})
+    save_model(rf, a.model, sigmas=sigmas, norm={"lo": a.lo, "hi": a.hi, "smooth": a.smooth, "norm": a.norm or "bounds"})
     print(f"[train] saved {a.model}")
 
 
@@ -141,11 +147,13 @@ def cmd_predict(a):
     lo = a.lo if a.lo is not None else norm.get("lo")
     hi = a.hi if a.hi is not None else norm.get("hi")
     smooth = a.smooth if a.smooth is not None else norm.get("smooth")
+    mode = a.norm or norm.get("norm", "bounds")
+    box = tuple(a.crop) if a.crop else None
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     files = list_slices(a.input)
     if not files:
         sys.exit(f"no .tif/.tiff slices found in {a.input}")
-    print(f"[predict] {len(files)} slices from {a.input}; grey bounds lo={lo} hi={hi}; pre-smooth={smooth}")
+    print(f"[predict] {len(files)} slices from {a.input}; norm={mode} lo={lo} hi={hi}; pre-smooth={smooth}; crop={box}")
     (out / "labels").mkdir(exist_ok=True)
     phase_dirs = {}
     if a.per_phase:
@@ -158,7 +166,7 @@ def cmd_predict(a):
     t_start = time.time()
     for i, f in enumerate(files, 1):
         if a.overwrite or not (out / "labels" / f"{f.stem}_labels.tif").exists():
-            im = _load_norm(f, lo, hi, smooth)
+            im = _load_norm(f, lo, hi, smooth, mode, box)
             lab, proba = predict(rf, im, sigmas)
             lab = _postprocess(lab, im, a)
             write_labels(out / "labels" / f"{f.stem}_labels.tif", lab)
@@ -198,7 +206,8 @@ def cmd_review(a):
     lo = a.lo if a.lo is not None else norm.get("lo")
     hi = a.hi if a.hi is not None else norm.get("hi")
     smooth = a.smooth if a.smooth is not None else norm.get("smooth")
-    im = _load_norm(a.image, lo, hi, smooth)
+    mode = a.norm or norm.get("norm", "bounds")
+    im = _load_norm(a.image, lo, hi, smooth, mode, tuple(a.crop) if a.crop else None)
     lab, proba = predict(rf, im, sigmas)
     lab = _postprocess(lab, im, a)
     scr = load_scribbles(a.scribbles, im.shape) if a.scribbles else None

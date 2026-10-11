@@ -131,6 +131,25 @@ raw phase grey levels are similar (`--lo/--hi` otherwise) and (b) the pixel
 size is similar, since feature scales are in pixels; then inspect one review
 figure before running the whole volume.
 
+### LCO60_2: a raw, uncropped stack with different contrast
+
+`data/LCO60_2/slice-4.tif` (3000×1500 px, 50 nm/px) differs from LCO60 in
+three ways, each handled by an option:
+
+| difference | measurement | option |
+|------------|-------------|--------|
+| not cropped: cathode spans rows ≈60–1430, cols ≈150–2750 | 85 × 35 µm = 1700 × 700 px | `--crop 400 1100 600 2300` (rows Y0 Y1, cols X0 X1; see `docs/LCO60_2_crop_box.png`) |
+| raw, noisy | noise std 3400 vs 460 in processed LCO60 | `--smooth 1.5` |
+| different contrast, brightness drifts along z | phase medians 5.8k / 17.1k / 41.0k vs 11.2k / 23.2k / 44.9k | `--norm phase` |
+
+`--norm phase` normalises each slice so that its pore and LLZTO medians (from
+a multi-Otsu split of the smoothed slice) land on the training values 0.18
+and 0.875, which makes the model independent of the stack's contrast and of
+drift along z.  With these options the committed model agrees on 98.4 % of
+pixels with a model trained on this slice itself (`docs/LCO60_2_slice-4_overlay.png`):
+pore 22.9 %, LCO 48.6 %, LLZTO 28.5 % in the crop.  `scripts\\segment_lco60_2_stack.bat`
+runs it; set its `INPUT` path first.
+
 ## Running on the LCO60 stack (Windows)
 
 `models/rf_lco60.joblib` is committed (100 trees, depth 14, 6 MB; it agrees
