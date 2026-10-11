@@ -49,13 +49,17 @@ def load_scribbles(path: str | Path, shape: tuple[int, int]) -> np.ndarray:
 
 
 def auto_seeds(im_norm: np.ndarray, erode: int = 3, margin: float = 0.35,
-               smooth: float = 1.0) -> tuple[np.ndarray, tuple[float, float]]:
+               smooth: float = 1.0, keep_small: int = 200) -> tuple[np.ndarray, tuple[float, float]]:
     """High-confidence seed labels from multi-Otsu thresholds.
 
     A pixel is a seed only if its smoothed grey value is at least ``margin`` of
     the class width away from both thresholds *and* it survives erosion with a
     disk of radius ``erode`` (so seeds stay inside objects, never on edges).
-    Everything else stays 0 (unlabelled) and is left to the classifier.
+    Small objects would lose their seed entirely to the erosion and then be
+    flooded with the surrounding phase by the watershed, so connected
+    components of the un-eroded core smaller than ``keep_small`` px (and at
+    least 4 px) are kept whole.  Everything else stays 0 (unlabelled) and is
+    left to the classifier.
     """
     g = ndi.gaussian_filter(im_norm, smooth) if smooth > 0 else im_norm
     t1, t2 = threshold_multiotsu(g, classes=3)
@@ -67,7 +71,14 @@ def auto_seeds(im_norm: np.ndarray, erode: int = 3, margin: float = 0.35,
     se = sk_disk(erode) if erode > 0 else None
     for k, m in ((1, lo_core), (2, mid_core), (3, hi_core)):
         if se is not None:
-            m = erosion(m, se)
+            eroded = erosion(m, se)
+            if keep_small > 0:
+                cc, n = ndi.label(m)
+                sizes = np.bincount(cc.ravel())
+                small = (sizes >= 4) & (sizes < keep_small)
+                small[0] = False
+                eroded = eroded | small[cc]
+            m = eroded
         seeds[m] = k
     return seeds, (float(t1), float(t2))
 

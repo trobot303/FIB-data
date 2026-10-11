@@ -113,9 +113,10 @@ def build_training_labels(im_norm, scribble_path=None, label_path=None, auto=Fal
 def cmd_train(a):
     ts = TrainingSet()
     sigmas = tuple(a.sigmas) if a.sigmas else DEFAULT_SIGMAS
-    scr = a.scribbles or [None] * len(a.image)
-    labs = a.labels or [None] * len(a.image)
-    for img, s, l in zip(a.image, scr, labs):
+    n = len(a.image)
+    scr = list(a.scribbles or []) + [None] * n          # pad: fewer --scribbles than --image is fine
+    labs = list(a.labels or []) + [None] * n
+    for img, s, l in zip(a.image, scr[:n], labs[:n]):
         print(f"[train] {img}")
         im = _load_norm(img, a.lo, a.hi, a.smooth, a.norm or "bounds", a.crop)
         lab = build_training_labels(im, s, l, a.auto_seeds, a.auto_erode, a.auto_margin, a.dense, a.drop_boundary,

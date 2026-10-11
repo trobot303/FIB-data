@@ -3,3 +3,4 @@ __pycache__/
 results/
 models/*
 !models/rf_lco60.joblib
+!models/rf_all.joblib

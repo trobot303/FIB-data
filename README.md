@@ -150,6 +150,42 @@ pixels with a model trained on this slice itself (`docs/LCO60_2_slice-4_overlay.
 pore 22.9 %, LCO 48.6 %, LLZTO 28.5 % in the crop.  `scripts\\segment_lco60_2_stack.bat`
 runs it on `...\\FIB data\\processed_LCO60_2`.
 
+### LCO70: small LLZTO particles, and the combined model `rf_all`
+
+The LCO70 slices (`data/LCO70/`, already cropped to 1700×700, HistBal-Gauss-
+Kuwahara processed, same grey scale as LCO60) contain many LLZTO particles of
+only 3–8 px.  The LCO60 model labelled about half of them LCO.  The cause was
+in the training-label generation: auto-seeds were eroded by 3 px, so objects
+smaller than ~7 px never received a seed and the watershed flooded them with
+the surrounding phase, teaching the forest "small bright blob = LCO".
+`auto_seeds` now keeps small connected cores whole (`keep_small`, default
+200 px), which raises the share of small bright blobs labelled LLZTO on LCO70
+from 0.45 to 0.90.
+
+`models/rf_all.joblib` is trained with the fixed seeds on the four LCO60 and
+the three LCO70 slices (`--norm phase --smooth 1.0`, 120 trees, depth 14,
+OOB 0.985).  It is the model to use for LCO70 (`scripts\\segment_lco70_stack.bat`)
+and for any future stack.  On LCO60 it agrees with `rf_lco60` on 95.6 % of
+pixels; the difference is mostly the recovered small particles and a slightly
+tighter LLZTO edge.
+
+| LCO70 slice | pore | LCO | LLZTO |
+|------------:|-----:|----:|------:|
+| 001 | 19.5 % | 58.0 % | 22.5 % |
+| 075 | 19.6 % | 58.8 % | 21.6 % |
+| 125 | 21.0 % | 56.4 % | 22.6 % |
+
+See `docs/overlay_LCO70_rf_all.png`.  Because LCO70's LLZTO grains are small,
+the LLZTO fraction is very sensitive to the edge convention: `--solid-level
+auto` (edge exactly at the multi-Otsu threshold, about one pixel further in)
+gives 18–19 % instead of 22 %.  Use the same convention for every sample you
+compare.
+
+Note on earlier models: a bug in `train` (one `--scribbles` file given with
+several `--image` files truncated the image list) meant `rf_v4`/`rf_lco60`
+were in fact trained on slice 001 only.  Fixed; the results on LCO60 were
+still fine because the slices are alike.
+
 ## Running on the LCO60 stack (Windows)
 
 `models/rf_lco60.joblib` is committed (100 trees, depth 14, 6 MB; it agrees
