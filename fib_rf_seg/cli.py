@@ -21,8 +21,9 @@ import numpy as np
 
 from . import PHASES
 from .io import list_slices, normalise, read_labels, read_slice, write_labels
+from .features import DEFAULT_SIGMAS
 from .model import TrainingSet, load_model, predict, save_model, train
-from .postprocess import clean_labels, phase_fractions
+from .postprocess import clean_labels, phase_fractions, pore_level_auto, snap_to_edges, trim_pores
 from .scribbles import auto_seeds, densify, load_scribbles, merge_labels
 from .viz import review_figure
 
@@ -36,8 +37,18 @@ def _load_norm(path, lo, hi):
     return normalise(read_slice(path), lo, hi)
 
 
+def _pore_level(arg, im_norm):
+    """Resolve --pore-level: None (off), 'auto' (multi-Otsu) or a number."""
+    if arg is None:
+        return None
+    if str(arg).lower() == "auto":
+        return pore_level_auto(im_norm)
+    return float(arg)
+
+
 def build_training_labels(im_norm, scribble_path=None, label_path=None, auto=False,
-                          auto_erode=3, auto_margin=0.35, dense=False, drop_boundary=1):
+                          auto_erode=3, auto_margin=0.35, dense=False, drop_boundary=1,
+                          pore_level=None, band=3):
     parts = []
     if auto:
         seeds, (t1, t2) = auto_seeds(im_norm, erode=auto_erode, margin=auto_margin)
@@ -52,26 +63,52 @@ def build_training_labels(im_norm, scribble_path=None, label_path=None, auto=Fal
         sys.exit("no training labels given (use --auto-seeds, --scribbles or --labels)")
     lab = merge_labels(*parts)
     if dense:
-        lab = densify(im_norm, lab, drop_boundary=drop_boundary)
+        lab = densify(im_norm, lab, drop_boundary=0)
         print("  densified by watershed: " + ", ".join(f"{PHASES[k]}={int((lab == k).sum())}" for k in PHASES))
+        level = _pore_level(pore_level, im_norm)
+        if level is not None:
+            lab = trim_pores(lab, im_norm, level, band=band)
+            print(f"  pore edges set at grey level {level:.3f}: " + ", ".join(f"{PHASES[k]}={int((lab == k).sum())}" for k in PHASES))
+        if drop_boundary > 0:
+            from skimage.segmentation import find_boundaries
+            from scipy import ndimage as ndi
+            b = find_boundaries(lab, mode="thick")
+            if drop_boundary > 1:
+                b = ndi.binary_dilation(b, iterations=drop_boundary - 1)
+            lab[b] = 0
     return lab
 
 
 def cmd_train(a):
     ts = TrainingSet()
+    sigmas = tuple(a.sigmas) if a.sigmas else DEFAULT_SIGMAS
     scr = a.scribbles or [None] * len(a.image)
     labs = a.labels or [None] * len(a.image)
     for img, s, l in zip(a.image, scr, labs):
         print(f"[train] {img}")
         im = _load_norm(img, a.lo, a.hi)
-        lab = build_training_labels(im, s, l, a.auto_seeds, a.auto_erode, a.auto_margin, a.dense, a.drop_boundary)
+        lab = build_training_labels(im, s, l, a.auto_seeds, a.auto_erode, a.auto_margin, a.dense, a.drop_boundary,
+                                    a.pore_level, a.band)
         print("  labels used: " + ", ".join(f"{PHASES[k]}={int((lab == k).sum())}" for k in PHASES))
-        ts.add(im, lab, max_per_class=a.max_per_class)
+        ts.add(im, lab, sigmas=sigmas, max_per_class=a.max_per_class, boundary_frac=a.boundary_frac)
     t0 = time.time()
-    rf = train(ts, n_estimators=a.trees, max_depth=a.max_depth)
+    mf = a.max_features
+    mf = None if mf == "all" else (float(mf) if mf.replace(".", "", 1).isdigit() else mf)
+    rf = train(ts, n_estimators=a.trees, max_depth=a.max_depth, max_features=mf)
     print(f"[train] {len(ts.arrays()[1])} samples, {a.trees} trees, {time.time() - t0:.1f}s, OOB accuracy {rf.oob_score_:.4f}")
-    save_model(rf, a.model, norm={"lo": a.lo, "hi": a.hi})
+    save_model(rf, a.model, sigmas=sigmas, norm={"lo": a.lo, "hi": a.hi})
     print(f"[train] saved {a.model}")
+
+
+def _postprocess(lab, im, a):
+    if a.snap >= 0:
+        lab = snap_to_edges(lab, im, erode=a.snap)
+    level = _pore_level(a.pore_level, im)
+    if level is not None:
+        lab = trim_pores(lab, im, level, band=a.band)
+    if a.min_size > 0:
+        lab = clean_labels(lab, min_size=a.min_size, majority_radius=a.majority)
+    return lab
 
 
 def cmd_predict(a):
@@ -84,8 +121,7 @@ def cmd_predict(a):
     for f in files:
         im = _load_norm(f, lo, hi)
         lab, proba = predict(rf, im, sigmas)
-        if a.min_size > 0:
-            lab = clean_labels(lab, min_size=a.min_size, majority_radius=a.majority)
+        lab = _postprocess(lab, im, a)
         write_labels(out / f"{f.stem}_labels.tif", lab)
         if a.save_proba:
             np.save(out / f"{f.stem}_proba.npy", proba)
@@ -102,8 +138,7 @@ def cmd_review(a):
     hi = a.hi if a.hi is not None else norm.get("hi")
     im = _load_norm(a.image, lo, hi)
     lab, proba = predict(rf, im, sigmas)
-    if a.min_size > 0:
-        lab = clean_labels(lab, min_size=a.min_size, majority_radius=a.majority)
+    lab = _postprocess(lab, im, a)
     scr = load_scribbles(a.scribbles, im.shape) if a.scribbles else None
     region = tuple(a.region) if a.region else None
     fr = phase_fractions(lab)
@@ -126,8 +161,13 @@ def main(argv=None):
     t.add_argument("--dense", action="store_true", help="propagate seeds/scribbles to all pixels with a watershed before sampling")
     t.add_argument("--drop-boundary", type=int, default=1, help="with --dense: unlabel pixels this close to watershed lines")
     t.add_argument("--max-per-class", type=int, default=20000)
+    t.add_argument("--pore-level", default=None, help="grey level (0-1) of the pore edge in the training labels, or 'auto' (multi-Otsu); default: transition midpoint")
+    t.add_argument("--band", type=int, default=3, help="width in px of the boundary band the pore level is applied in")
+    t.add_argument("--boundary-frac", type=float, default=0.5, help="share of samples per class drawn within 4 px of a phase boundary")
+    t.add_argument("--sigmas", type=float, nargs="+", help=f"feature scales in px (default {DEFAULT_SIGMAS})")
     t.add_argument("--trees", type=int, default=200)
     t.add_argument("--max-depth", type=int, default=20)
+    t.add_argument("--max-features", default="sqrt", help="features tried per split: sqrt, log2, a fraction (0.5) or all")
     t.add_argument("--model", required=True)
     _norm_args(t)
     t.set_defaults(func=cmd_train)
@@ -138,6 +178,9 @@ def main(argv=None):
     pr.add_argument("--out", required=True)
     pr.add_argument("--min-size", type=int, default=0, help="remove islands smaller than this (pixels)")
     pr.add_argument("--majority", type=int, default=0, help="majority filter radius (0 = off)")
+    pr.add_argument("--pore-level", default=None, help="re-place pore edges at this grey level (0-1) or 'auto' (multi-Otsu)")
+    pr.add_argument("--band", type=int, default=3)
+    pr.add_argument("--snap", type=int, default=-1, metavar="ERODE", help="snap boundaries to grey edges by watershed (erode radius for markers, e.g. 2; -1 = off)")
     pr.add_argument("--save-proba", action="store_true")
     _norm_args(pr)
     pr.set_defaults(func=cmd_predict)
@@ -150,6 +193,9 @@ def main(argv=None):
     r.add_argument("--region", type=int, nargs=4, metavar=("Y0", "Y1", "X0", "X1"))
     r.add_argument("--min-size", type=int, default=0)
     r.add_argument("--majority", type=int, default=0)
+    r.add_argument("--pore-level", default=None, help="re-place pore edges at this grey level (0-1) or 'auto' (multi-Otsu)")
+    r.add_argument("--band", type=int, default=3)
+    r.add_argument("--snap", type=int, default=-1, metavar="ERODE", help="snap boundaries to grey edges by watershed (erode radius for markers, e.g. 2; -1 = off)")
     _norm_args(r)
     r.set_defaults(func=cmd_review)
 

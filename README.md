@@ -32,14 +32,26 @@ pip install -r requirements.txt
    ```bash
    python -m fib_rf_seg train --image data/LCO60_Processed001.tiff \
        --scribbles data/labels/LCO60_Processed001_scribbles.json \
-       --auto-seeds --dense --max-per-class 40000 --model models/rf_v2.joblib
+       --auto-seeds --dense --pore-level auto --max-per-class 40000 --model models/rf_v3.joblib
    ```
+
+   **Pore edge position.** A watershed (and a pixel classifier trained on it)
+   puts each pore edge at the midpoint of the grey transition, which is 0.28
+   next to LCO but 0.40 next to LLZTO; that made pores 1–2 px too wide all
+   round.  `--pore-level L` instead places every pore edge where the lightly
+   smoothed grey value crosses `L` (0–1 normalised grey; `auto` = the
+   multi-Otsu pore/solid threshold, 0.256 on this slice).  The classifier still
+   decides *which* regions are pore (dark-grey pore back walls stay pore) and
+   which solid phase lies on the other side (no LCO halo between pore and
+   LLZTO); the level only moves the edge within a `--band` (default 3 px)
+   around it.  Lower `L` shrinks pores, higher `L` grows them.  The same option
+   on `predict`/`review` re-applies the rule after classification.
 
 2. **Review** the prediction (grey, overlay, labels, confidence map):
 
    ```bash
-   python -m fib_rf_seg review --model models/rf_v2.joblib --image data/LCO60_Processed001.tiff \
-       --min-size 20 --out docs/review_v2_full.png [--region Y0 Y1 X0 X1]
+   python -m fib_rf_seg review --model models/rf_v3.joblib --image data/LCO60_Processed001.tiff \
+       --pore-level auto --min-size 20 --out docs/review_v3_full.png [--region Y0 Y1 X0 X1]
    ```
 
 3. **Correct**: paint scribbles where the model is wrong and retrain.
@@ -48,7 +60,7 @@ pip install -r requirements.txt
 
    ```bash
    python -m fib_rf_seg.label --image data/LCO60_Processed001.tiff \
-       --out data/labels/LCO60_Processed001_scribbles.json --model models/rf_v2.joblib
+       --out data/labels/LCO60_Processed001_scribbles.json --model models/rf_v3.joblib
    ```
 
    Keys `1`/`2`/`3` choose the phase, drag to paint, `[`/`]` change the brush,
@@ -59,8 +71,8 @@ pip install -r requirements.txt
 4. **Predict** a whole stack (a directory of slices or one file):
 
    ```bash
-   python -m fib_rf_seg predict --model models/rf_v2.joblib --input /path/to/slices \
-       --out results/stack --min-size 20 [--save-proba]
+   python -m fib_rf_seg predict --model models/rf_v3.joblib --input /path/to/slices \
+       --out results/stack --pore-level auto --min-size 20 [--save-proba]
    ```
 
    Output: `<slice>_labels.tif` per slice plus `fractions.json`.  Each slice is
@@ -80,18 +92,27 @@ round brush.
 
 ## Features
 
-Per pixel, at sigmas 0.7, 1.5, 3, 6 and 12 px: Gaussian intensity, gradient
+Per pixel, at sigmas 0.5, 1, 2, 4 and 8 px: Gaussian intensity, gradient
 magnitude, Laplacian of Gaussian, both Hessian eigenvalues, local standard
 deviation, plus differences of Gaussians between neighbouring scales and the
 raw intensity (35 features).  The large scales give the context needed to call
 the dark-grey pore back walls "pore" rather than LCO.
 
+Half of each class's training samples are drawn within 4 px of a phase
+boundary (`--boundary-frac`, default 0.5) so edges are learnt precisely.
+
 ## Current state (slice LCO60_Processed001)
 
-Model `rf_v2` (auto-seeds + 8 scribbles, dense watershed labels, 200 trees):
-pore 36.1 %, LCO 40.3 %, LLZTO 23.6 %.  See `docs/overlay_v2_full.png` and
-`docs/review_v2_full.png`.  Known issue: bright charging artefacts at the top
-corners of the slice are labelled LLZTO; crop them away.
+| model | pore edge | pore | LCO | LLZTO |
+|-------|-----------|-----:|----:|------:|
+| rf_v2 | transition midpoint | 36.1 % | 40.3 % | 23.6 % |
+| rf_v3 | grey level 0.256 (`--pore-level auto`) | 29.3 % | 43.4 % | 27.4 % |
+
+v2 pores were inflated by 1–2 px all round; `docs/pore_edge_v2_vs_v3.png`
+shows both contours on two zoomed regions, `docs/overlay_v3_full.png` and
+`docs/review_v3_full.png` the whole slice with v3.  Known issue: bright
+charging artefacts at the top corners of the slice are labelled LLZTO; crop
+them away.
 
 Trained models are not committed (30 MB); the train command above reproduces
 them deterministically (`random_state=0`).

@@ -12,7 +12,7 @@ import numpy as np
 from scipy import ndimage as ndi
 from skimage.feature import hessian_matrix, hessian_matrix_eigvals
 
-DEFAULT_SIGMAS = (0.7, 1.5, 3.0, 6.0, 12.0)
+DEFAULT_SIGMAS = (0.5, 1.0, 2.0, 4.0, 8.0)
 
 
 def feature_names(sigmas=DEFAULT_SIGMAS) -> list[str]:
