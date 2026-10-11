@@ -186,6 +186,26 @@ several `--image` files truncated the image list) meant `rf_v4`/`rf_lco60`
 were in fact trained on slice 001 only.  Fixed; the results on LCO60 were
 still fine because the slices are alike.
 
+## Cropping segmented volumes to a common size
+
+All stacks share a 50 nm isotropic voxel, but LCO60_2 has fewer slices than
+LCO70 and LCO50.  `fib_rf_seg.cropvol` trims the *segmented* output folders
+to one size without resampling:
+
+```bash
+python -m fib_rf_seg.cropvol report  OUT_LCO60_2 OUT_LCO70 OUT_LCO50        # sizes in voxels and um
+python -m fib_rf_seg.cropvol crop    OUT_LCO70 OUT_LCO50 --match OUT_LCO60_2 --z-anchor start --stack
+```
+
+`--match` takes Z (slices), Y and X from the reference folder; `--size Z Y X`
+sets them directly.  `--z-anchor start|center|end` or `--z-start N` chooses
+which slices to keep; the x/y window is cut from the centre of each slice
+(`--xy-anchor start` for the top-left corner).  Each input gets a
+`<folder>_cropped` twin with the same layout (`labels/`, `pore/`, `LCO/`,
+`LLZTO/`, `fractions.csv`, optional phase stacks) plus `crop_info.json`
+recording the offsets.  `scripts\\crop_volumes_to_LCO60_2.bat` runs this for
+the three samples.
+
 ## Running on the LCO60 stack (Windows)
 
 `models/rf_lco60.joblib` is committed (100 trees, depth 14, 6 MB; it agrees
