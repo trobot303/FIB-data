@@ -21,18 +21,22 @@ def overlay(im_norm, lab, alpha=0.45):
     return np.clip(rgb, 0, 1)
 
 
-def add_scale_bar(ax, shape, px_um=0.05, length_um=10.0, color="white", loc="lower right", pad_frac=0.03, height_px=None):
-    """Draw a scale bar of ``length_um`` on an image axis (image shown in pixel coordinates)."""
+def add_scale_bar(ax, shape, px_um=0.05, length_um=10.0, color="white", loc="lower right", pad_frac=0.03,
+                  height_px=None, background="0.35", fontsize=12):
+    """Draw a scale bar of ``length_um`` with its label on a grey backing box (image in pixel coordinates)."""
     from matplotlib.patches import Rectangle
     h, w = shape[:2]
     L = length_um / px_um
     bh = height_px or max(3, int(0.008 * h))
-    x1 = w - pad_frac * w if "right" in loc else pad_frac * w + L
-    y1 = h - pad_frac * h if "lower" in loc else pad_frac * h + 3 * bh
-    ax.add_patch(Rectangle((x1 - L, y1 - bh), L, bh, color=color, zorder=10))
-    ax.text(x1 - L / 2, y1 - 1.6 * bh, f"{length_um:g} \u00b5m", color=color, ha="center", va="bottom",
-            fontsize=12, fontweight="bold", zorder=11,
-            path_effects=None)
+    text_h = 2.6 * bh
+    box_w, box_h = L + 2.0 * bh, bh + text_h + 2.0 * bh
+    x1 = w - pad_frac * w if "right" in loc else pad_frac * w + box_w
+    y1 = h - pad_frac * h if "lower" in loc else pad_frac * h + box_h
+    x0, y0 = x1 - box_w, y1 - box_h
+    ax.add_patch(Rectangle((x0, y0), box_w, box_h, color=background, alpha=0.85, zorder=10, lw=0))
+    ax.add_patch(Rectangle((x0 + bh, y1 - bh - bh), L, bh, color=color, zorder=11, lw=0))
+    ax.text(x0 + bh + L / 2, y1 - 2.4 * bh, f"{length_um:g} \u00b5m", color=color, ha="center", va="bottom",
+            fontsize=fontsize, fontweight="bold", zorder=12)
 
 
 def review_figure(im_norm, lab, scribbles=None, proba=None, title="", path=None, region=None):
