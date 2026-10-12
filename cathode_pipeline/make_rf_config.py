@@ -26,6 +26,8 @@ ap.add_argument("--device", default="auto")
 ap.add_argument("--tortuosity-downsample", type=int, default=2)
 ap.add_argument("--grains-downsample", type=int, default=2)
 ap.add_argument("--n-workers", type=int, default=8)
+ap.add_argument("--max-seconds", type=float, default=None, help="wall-time limit per tortuosity solve (default: none)")
+ap.add_argument("--max-iterations", type=int, default=200000)
 a = ap.parse_args()
 
 root = Path(a.data_root)
@@ -61,6 +63,8 @@ for name, (z, h, w) in found.items():
                     "crop": {"z": [0, Z], "y": [y0, y0 + Y], "x": [x0, x0 + X]}, "downsample": 1, "overrides": {}})
 cfg["samples"] = samples
 cfg["tortuosity"]["downsample"] = a.tortuosity_downsample
+cfg["tortuosity"]["taufactor"]["max_seconds"] = a.max_seconds
+cfg["tortuosity"]["taufactor"]["max_iterations"] = a.max_iterations
 cfg["grains"]["downsample"] = a.grains_downsample
 cfg["plotting"]["sample_colors"] = {k: v for k, v in cfg["plotting"]["sample_colors"].items()}
 with open(a.out, "w") as fh:

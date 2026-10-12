@@ -242,6 +242,18 @@ session, so the data travel through the repository:
 Verified in the session: all 50 tests pass; a 3-slice LCO70 volume runs
 through every stage in under 2 minutes.
 
+### Tortuosity at full resolution
+
+`cathode_pipeline\run_tortuosity_full.bat` re-runs only the tortuosity stage
+with `tortuosity.downsample: 1` (50 nm voxels) and no wall-time limit, keeps
+the earlier result as `tortuosity_downsampled.json`, then refreshes the report.
+Cost measured with taufactor on CPU: 16 B per voxel and 1.8 s per iteration
+per 71 Mvoxel on 4 threads, so a 700 x 700 x 1700 volume needs about 14 GB
+and roughly 20 s per iteration on CPU; with the tens of thousands of
+iterations a 700-voxel-long path needs, that is days per phase on CPU and
+hours on a GPU.  `downsample: 2` (100 nm) costs 1/8 of the memory and about
+1/30 of the time and changes tau by a few percent.
+
 ## Running on the LCO60 stack (Windows)
 
 `models/rf_lco60.joblib` is committed (100 trees, depth 14, 6 MB; it agrees
