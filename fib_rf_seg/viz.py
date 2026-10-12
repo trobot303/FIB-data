@@ -21,6 +21,20 @@ def overlay(im_norm, lab, alpha=0.45):
     return np.clip(rgb, 0, 1)
 
 
+def add_scale_bar(ax, shape, px_um=0.05, length_um=10.0, color="white", loc="lower right", pad_frac=0.03, height_px=None):
+    """Draw a scale bar of ``length_um`` on an image axis (image shown in pixel coordinates)."""
+    from matplotlib.patches import Rectangle
+    h, w = shape[:2]
+    L = length_um / px_um
+    bh = height_px or max(3, int(0.008 * h))
+    x1 = w - pad_frac * w if "right" in loc else pad_frac * w + L
+    y1 = h - pad_frac * h if "lower" in loc else pad_frac * h + 3 * bh
+    ax.add_patch(Rectangle((x1 - L, y1 - bh), L, bh, color=color, zorder=10))
+    ax.text(x1 - L / 2, y1 - 1.6 * bh, f"{length_um:g} \u00b5m", color=color, ha="center", va="bottom",
+            fontsize=12, fontweight="bold", zorder=11,
+            path_effects=None)
+
+
 def review_figure(im_norm, lab, scribbles=None, proba=None, title="", path=None, region=None):
     """Side-by-side: grey image, overlay, label map, and (optionally) max-probability map."""
     if region is not None:
