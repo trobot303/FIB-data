@@ -17,6 +17,14 @@ from pathlib import Path
 
 import numpy as np
 import matplotlib
+
+if matplotlib.get_backend().lower().endswith("agg"):      # need an interactive window
+    for _b in ("MacOSX", "QtAgg", "TkAgg"):
+        try:
+            matplotlib.use(_b)
+            break
+        except Exception:
+            continue
 import matplotlib.pyplot as plt
 
 from . import PHASES, PHASE_COLORS
@@ -103,7 +111,8 @@ def main(argv=None):
     fig.canvas.mpl_connect("button_release_event", on_release)
     fig.canvas.mpl_connect("key_press_event", on_key)
     title()
-    plt.show()
+    print(f"backend {matplotlib.get_backend()}; window open - keys: 1/2/3/4 phase, [ ] brush, u undo, o overlay, s save, q quit")
+    plt.show(block=True)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,9 @@ import sys
 import time
 from pathlib import Path
 
+import matplotlib
+
+matplotlib.use("Agg")          # headless: review figures are written to files
 import numpy as np
 
 from . import PHASES
