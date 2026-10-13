@@ -62,6 +62,7 @@ def main():
     ap.add_argument("--device", default="auto"); ap.add_argument("--max-iter", type=int, default=20000)
     ap.add_argument("--conv", type=float, default=0.02); ap.add_argument("--out", default=None)
     ap.add_argument("--z", type=int, nargs=2, default=None, metavar=("Z0", "Z1"))
+    ap.add_argument("--phases", nargs="+", default=["lco", "llzto"], choices=("lco", "llzto"), help="which phases to solve (lco = both crack cases)")
     a = ap.parse_args()
     import torch
     device = a.device
@@ -73,13 +74,17 @@ def main():
         if not p.exists(): return None
         arr = tifffile.imread(str(p)); arr = arr[a.z[0]:a.z[1]] if a.z else arr
         return arr > 0
-    lco, llz, crack = load("LCO"), load("LLZTO"), load("crack")
+    lco, crack = load("LCO"), load("crack")
+    llz = load("LLZTO") if "llzto" in a.phases else None
     sep = "bottom" if a.collector == "top" else "top"
     print(f"stack {lco.shape} (z, y, x), downsample {a.downsample}, device {device}, collector {a.collector}")
-    cases = {"LCO_cracks_as_void": (lco, a.collector)}
-    if crack is not None:
-        cases["LCO_cracks_filled"] = (lco | crack, a.collector)
-    cases["LLZTO"] = (llz, sep)
+    cases = {}
+    if "lco" in a.phases:
+        cases["LCO_cracks_as_void"] = (lco, a.collector)
+        if crack is not None:
+            cases["LCO_cracks_filled"] = (lco | crack, a.collector)
+    if "llzto" in a.phases:
+        cases["LLZTO"] = (llz, sep)
     res = {"folder": str(d), "shape_zyx": list(lco.shape), "downsample": a.downsample, "device": device, "direction": "y", "phases": {}}
     for name, (mask, face) in cases.items():
         vf_full = float(mask.mean())
