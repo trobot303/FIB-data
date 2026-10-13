@@ -9,3 +9,4 @@ cathode_pipeline/results*/
 results_pipeline/
 !models/rf_cracks_v1.joblib
 !models/rf_cracks_v2.joblib
+!models/rf_cracks_v3.joblib
