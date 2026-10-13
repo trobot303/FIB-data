@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 
 from . import PHASES
-from .io import crop, list_slices, normalise, normalise_phases, read_labels, read_slice, write_labels
+from .io import crop, destripe, list_slices, normalise, normalise_phases, read_labels, read_slice, write_labels
 from .features import DEFAULT_SIGMAS
 from .model import TrainingSet, load_model, predict, save_model, train
 from .postprocess import clean_labels, phase_fractions, place_solid_edges, pore_level_auto, snap_to_edges, solid_level_auto, trim_pores
@@ -36,13 +36,16 @@ def _norm_args(p):
                    help="'bounds': linear map with --lo/--hi (or per-slice percentiles); 'phase': per-slice map that puts the pore and LLZTO medians on the training scale (robust to drift along z and to other stacks)")
     p.add_argument("--crop", type=int, nargs=4, metavar=("Y0", "Y1", "X0", "X1"), default=None,
                    help="crop every slice to rows Y0:Y1 and columns X0:X1 before processing (pixel indices, end exclusive)")
+    p.add_argument("--destripe", action="store_true", help="remove vertical curtaining stripes before normalisation")
 
 
-def _load_norm(path, lo, hi, smooth=None, norm="bounds", box=None):
+def _load_norm(path, lo, hi, smooth=None, norm="bounds", box=None, strip=False):
     im = crop(read_slice(path), box)
     if smooth:
         from scipy import ndimage as ndi
         im = ndi.gaussian_filter(im, smooth)
+    if strip:
+        im = destripe(im)
     if norm == "phase":
         return normalise_phases(im)
     return normalise(im, lo, hi)
@@ -82,10 +85,11 @@ def apply_edge_levels(lab, im_norm, pore_level=None, solid_level=None, band=3, v
 
 def build_training_labels(im_norm, scribble_path=None, label_path=None, auto=False,
                           auto_erode=3, auto_margin=0.35, dense=False, drop_boundary=1,
-                          pore_level=None, band=3, solid_level=None):
+                          pore_level=None, band=3, solid_level=None, crack_width=0, crack_contrast=0.35):
     parts = []
     if auto:
-        seeds, (t1, t2) = auto_seeds(im_norm, erode=auto_erode, margin=auto_margin)
+        seeds, (t1, t2) = auto_seeds(im_norm, erode=auto_erode, margin=auto_margin,
+                                     crack_width=crack_width, crack_contrast=crack_contrast)
         print(f"  auto seeds: thresholds {t1:.3f}/{t2:.3f}; "
               + ", ".join(f"{PHASES[k]}={int((seeds == k).sum())}" for k in PHASES))
         parts.append(seeds)
@@ -96,17 +100,23 @@ def build_training_labels(im_norm, scribble_path=None, label_path=None, auto=Fal
     if not parts:
         sys.exit("no training labels given (use --auto-seeds, --scribbles or --labels)")
     lab = merge_labels(*parts)
+    cracks = lab == 4
     if dense:
+        from scipy import ndimage as ndi
+        lab[cracks] = 0
         lab = densify(im_norm, lab, drop_boundary=0)
         print("  densified by watershed: " + ", ".join(f"{PHASES[k]}={int((lab == k).sum())}" for k in PHASES))
         lab = apply_edge_levels(lab, im_norm, pore_level, solid_level, band, verbose=True)
         if drop_boundary > 0:
             from skimage.segmentation import find_boundaries
-            from scipy import ndimage as ndi
             b = find_boundaries(lab, mode="thick")
             if drop_boundary > 1:
                 b = ndi.binary_dilation(b, iterations=drop_boundary - 1)
             lab[b] = 0
+        if cracks.any():                      # crack scribbles: 1 px wide label, 3 px unlabelled rim
+            lab[ndi.binary_dilation(cracks, iterations=3)] = 0
+            lab[ndi.binary_dilation(cracks, iterations=1)] = 4
+            print(f"  crack scribbles: {int((lab == 4).sum())} px")
     return lab
 
 
@@ -118,17 +128,18 @@ def cmd_train(a):
     labs = list(a.labels or []) + [None] * n
     for img, s, l in zip(a.image, scr[:n], labs[:n]):
         print(f"[train] {img}")
-        im = _load_norm(img, a.lo, a.hi, a.smooth, a.norm or "bounds", a.crop)
+        im = _load_norm(img, a.lo, a.hi, a.smooth, a.norm or "bounds", a.crop, a.destripe)
         lab = build_training_labels(im, s, l, a.auto_seeds, a.auto_erode, a.auto_margin, a.dense, a.drop_boundary,
-                                    a.pore_level, a.band, a.solid_level)
+                                    a.pore_level, a.band, a.solid_level, a.crack_width, a.crack_contrast)
         print("  labels used: " + ", ".join(f"{PHASES[k]}={int((lab == k).sum())}" for k in PHASES))
         ts.add(im, lab, sigmas=sigmas, max_per_class=a.max_per_class, boundary_frac=a.boundary_frac)
     t0 = time.time()
     mf = a.max_features
     mf = None if mf == "all" else (float(mf) if mf.replace(".", "", 1).isdigit() else mf)
-    rf = train(ts, n_estimators=a.trees, max_depth=a.max_depth, max_features=mf)
+    cw = "balanced" if a.class_weight == "balanced" else (None if a.class_weight == "none" else {1: 1, 2: 1, 3: 1, 4: float(a.class_weight)})
+    rf = train(ts, n_estimators=a.trees, max_depth=a.max_depth, max_features=mf, class_weight=cw)
     print(f"[train] {len(ts.arrays()[1])} samples, {a.trees} trees, {time.time() - t0:.1f}s, OOB accuracy {rf.oob_score_:.4f}")
-    save_model(rf, a.model, sigmas=sigmas, norm={"lo": a.lo, "hi": a.hi, "smooth": a.smooth, "norm": a.norm or "bounds"})
+    save_model(rf, a.model, sigmas=sigmas, norm={"lo": a.lo, "hi": a.hi, "smooth": a.smooth, "norm": a.norm or "bounds", "destripe": a.destripe})
     print(f"[train] saved {a.model}")
 
 
@@ -149,6 +160,7 @@ def cmd_predict(a):
     hi = a.hi if a.hi is not None else norm.get("hi")
     smooth = a.smooth if a.smooth is not None else norm.get("smooth")
     mode = a.norm or norm.get("norm", "bounds")
+    strip = a.destripe or bool(norm.get("destripe", False))
     box = tuple(a.crop) if a.crop else None
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     files = list_slices(a.input)
@@ -167,7 +179,7 @@ def cmd_predict(a):
     t_start = time.time()
     for i, f in enumerate(files, 1):
         if a.overwrite or not (out / "labels" / f"{f.stem}_labels.tif").exists():
-            im = _load_norm(f, lo, hi, smooth, mode, box)
+            im = _load_norm(f, lo, hi, smooth, mode, box, strip)
             lab, proba = predict(rf, im, sigmas)
             lab = _postprocess(lab, im, a)
             write_labels(out / "labels" / f"{f.stem}_labels.tif", lab)
@@ -190,9 +202,9 @@ def cmd_predict(a):
     with open(out / "fractions.json", "w") as fh:
         json.dump(summary, fh, indent=2)
     with open(out / "fractions.csv", "w") as fh:
-        fh.write("slice,pore,LCO,LLZTO\n")
+        fh.write("slice," + ",".join(PHASES[k] for k in PHASES) + "\n")
         for name, fr in summary.items():
-            fh.write(f"{name},{fr[1]:.5f},{fr[2]:.5f},{fr[3]:.5f}\n")
+            fh.write(name + "," + ",".join(f"{fr[k]:.5f}" for k in PHASES) + "\n")
     if stacks is not None:
         tifffile.imwrite(str(out / "labels_stack.tif"), np.stack(stacks[0]), compression="zlib", photometric="minisblack")
         for k in PHASES:
@@ -208,7 +220,8 @@ def cmd_review(a):
     hi = a.hi if a.hi is not None else norm.get("hi")
     smooth = a.smooth if a.smooth is not None else norm.get("smooth")
     mode = a.norm or norm.get("norm", "bounds")
-    im = _load_norm(a.image, lo, hi, smooth, mode, tuple(a.crop) if a.crop else None)
+    strip = a.destripe or bool(norm.get("destripe", False))
+    im = _load_norm(a.image, lo, hi, smooth, mode, tuple(a.crop) if a.crop else None, strip)
     lab, proba = predict(rf, im, sigmas)
     lab = _postprocess(lab, im, a)
     scr = load_scribbles(a.scribbles, im.shape) if a.scribbles else None
@@ -230,6 +243,8 @@ def main(argv=None):
     t.add_argument("--auto-seeds", action="store_true", help="add high-confidence multi-Otsu seeds")
     t.add_argument("--auto-erode", type=int, default=3)
     t.add_argument("--auto-margin", type=float, default=0.35)
+    t.add_argument("--crack-width", type=int, default=0, help="add automatic crack seeds (class 4): max half-width in px of a dark line counted as crack; 0 = off")
+    t.add_argument("--crack-contrast", type=float, default=0.35, help="crack seed depth as a fraction of the LCO-pore grey difference")
     t.add_argument("--dense", action="store_true", help="propagate seeds/scribbles to all pixels with a watershed before sampling")
     t.add_argument("--drop-boundary", type=int, default=1, help="with --dense: unlabel pixels this close to watershed lines")
     t.add_argument("--max-per-class", type=int, default=20000)
@@ -240,6 +255,7 @@ def main(argv=None):
     t.add_argument("--sigmas", type=float, nargs="+", help=f"feature scales in px (default {DEFAULT_SIGMAS})")
     t.add_argument("--trees", type=int, default=200)
     t.add_argument("--max-depth", type=int, default=20)
+    t.add_argument("--class-weight", default="balanced", help="'balanced' (default; not for crack models), 'none', or a number = weight of the crack class")
     t.add_argument("--max-features", default="sqrt", help="features tried per split: sqrt, log2, a fraction (0.5) or all")
     t.add_argument("--model", required=True)
     _norm_args(t)

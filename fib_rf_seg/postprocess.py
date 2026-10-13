@@ -113,5 +113,6 @@ def trim_pores(lab: np.ndarray, im_norm: np.ndarray, level: float, band: int = 3
 
 
 def phase_fractions(lab: np.ndarray) -> dict[int, float]:
+    from . import PHASES
     n = lab.size
-    return {int(c): float((lab == c).sum()) / n for c in (1, 2, 3)}
+    return {int(c): float((lab == c).sum()) / n for c in PHASES}

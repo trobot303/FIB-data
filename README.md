@@ -186,6 +186,35 @@ several `--image` files truncated the image list) meant `rf_v4`/`rf_lco60`
 were in fact trained on slice 001 only.  Fixed; the results on LCO60 were
 still fine because the slices are alike.
 
+## Cracks in cycled samples (class 4)
+
+`fib_rf_seg` has a fourth class, `4 = crack`, for cycled electrodes (thin dark
+lines through and between the LCO grains).  Cracks cannot be seeded
+automatically with enough reliability (a black top-hat finds grain-edge
+shadows as readily as cracks), so they are trained from scribbles drawn with
+`python -m fib_rf_seg.label` (key `4`) or supplied as a JSON file.  For a crack
+model use
+
+```bash
+python -m fib_rf_seg train --image data/LCO70_cycled/slice-0015.tif \
+    --scribbles data/labels/LCO70_cycled_slice-0015_cracks.json \
+    --auto-seeds --dense --norm phase --smooth 0.7 --destripe --class-weight 4 \
+    --max-per-class 25000 --model models/rf_cracks_v1.joblib
+```
+
+* `--destripe` removes the vertical FIB curtaining (column offsets that survive
+  a long smoothing along the rows); without it the dark stripes are confused
+  with cracks.  The flag is stored in the model and applied by `predict`.
+* `--auto-seeds --dense` label pore / LCO / LLZTO everywhere by watershed;
+  crack scribbles are then painted on top 1 px wide with a 3 px unlabelled rim.
+* `--class-weight 4` gives the (rare) crack class a fixed weight; the default
+  `balanced` makes the forest call every dark stripe and grain rim a crack.
+
+`rf_cracks_v1` was trained on two verified cracks of slice-0015 (0.4 % crack
+area); see `docs/overlays/LCO70_cycled_slice-0015_cracks_v1.png`.  It finds the
+prominent cracks but misses faint ones; more scribbles on several slices are
+needed for a production model.
+
 ## Cropping segmented volumes to a common size
 
 All stacks share a 50 nm isotropic voxel, but LCO60_2 has fewer slices than

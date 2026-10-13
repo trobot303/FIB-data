@@ -7,3 +7,4 @@ models/*
 cathode_pipeline/.venv/
 cathode_pipeline/results*/
 results_pipeline/
+!models/rf_cracks_v1.joblib

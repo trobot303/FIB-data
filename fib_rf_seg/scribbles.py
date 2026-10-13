@@ -48,8 +48,26 @@ def load_scribbles(path: str | Path, shape: tuple[int, int]) -> np.ndarray:
         return rasterise(json.load(f), shape)
 
 
+def crack_candidates(im_norm: np.ndarray, width: int = 3, contrast: float = 0.35, smooth: float = 1.0,
+                     min_len: int = 12) -> np.ndarray:
+    """Thin dark lines: a black top-hat (closing with a disk of radius ``width`` minus the image)
+    above ``contrast`` x (LCO - pore grey difference), excluding dark regions wider than
+    2*width (those survive an opening and are pores) and components shorter than ``min_len`` px."""
+    from skimage.morphology import closing, opening, remove_small_objects
+    g = ndi.gaussian_filter(im_norm, smooth) if smooth > 0 else im_norm
+    t1, t2 = threshold_multiotsu(g, classes=3)
+    lo, mid = float(np.median(g[g < t1])), float(np.median(g[(g >= t1) & (g < t2)]))
+    tophat = closing(g, sk_disk(width)) - g
+    cand = tophat > contrast * (mid - lo)
+    thick = opening(g < t1, sk_disk(width))
+    cand &= ~ndi.binary_dilation(thick, iterations=2)
+    cand &= g < t2                                  # never inside LLZTO
+    return remove_small_objects(cand, max_size=min_len - 1, connectivity=2) if min_len > 1 else cand
+
+
 def auto_seeds(im_norm: np.ndarray, erode: int = 3, margin: float = 0.35,
-               smooth: float = 1.0, keep_small: int = 200) -> tuple[np.ndarray, tuple[float, float]]:
+               smooth: float = 1.0, keep_small: int = 200, crack_width: int = 0,
+               crack_contrast: float = 0.35) -> tuple[np.ndarray, tuple[float, float]]:
     """High-confidence seed labels from multi-Otsu thresholds.
 
     A pixel is a seed only if its smoothed grey value is at least ``margin`` of
@@ -80,6 +98,10 @@ def auto_seeds(im_norm: np.ndarray, erode: int = 3, margin: float = 0.35,
                 eroded = eroded | small[cc]
             m = eroded
         seeds[m] = k
+    if crack_width > 0:
+        cr = crack_candidates(im_norm, width=crack_width, contrast=crack_contrast, smooth=smooth)
+        seeds[cr] = 4                              # cracks override pore/LCO seeds
+        seeds[ndi.binary_dilation(cr, iterations=2) & ~cr & (seeds != 3)] = 0   # unlabel the fuzzy rim
     return seeds, (float(t1), float(t2))
 
 
