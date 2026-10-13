@@ -71,6 +71,30 @@ def crack_candidates(im_norm: np.ndarray, width: int = 3, contrast: float = 0.35
     return remove_small_objects(cand, max_size=min_len - 1, connectivity=2) if min_len > 1 else cand
 
 
+def curtaining_negatives(im_norm: np.ndarray, sigma: float = 1.2, angle_deg: float = 20.0, min_len: int = 6,
+                         quantile: float = 95.0) -> np.ndarray:
+    """Vertical dark ridges (FIB curtaining) to be used as 'not crack' examples.
+
+    A dark line gives a positive Hessian eigenvalue across it; the ridge is
+    counted as vertical when its normal is within ``angle_deg`` of the column
+    axis.  Only ridges above the ``quantile`` of the response and longer than
+    ``min_len`` px are kept; LLZTO (bright) is excluded.
+    """
+    from skimage.feature import hessian_matrix, hessian_matrix_eigvals
+    from skimage.morphology import remove_small_objects
+    H = hessian_matrix(im_norm, sigma=sigma, order="rc", use_gaussian_derivatives=False)
+    Hrr, Hrc, Hcc = H
+    ev = hessian_matrix_eigvals(H)[0]                       # largest eigenvalue (dark line -> positive)
+    # orientation of the eigenvector of the largest eigenvalue (normal to the line)
+    theta = 0.5 * np.arctan2(2 * Hrc, Hcc - Hrr)              # angle of the normal from the column axis
+    vertical = np.abs(np.degrees(theta)) < angle_deg        # normal along columns -> line runs along rows? no: see below
+    # normal along the column axis means the line is vertical
+    g = ndi.gaussian_filter(im_norm, 1.0)
+    t1, t2 = threshold_multiotsu(g, classes=3)
+    cand = (ev > np.percentile(ev, quantile)) & vertical & (g < t2) & (Hcc > 2 * np.abs(Hrr))
+    return remove_small_objects(cand, max_size=min_len - 1, connectivity=2)
+
+
 def auto_seeds(im_norm: np.ndarray, erode: int = 3, margin: float = 0.35,
                smooth: float = 1.0, keep_small: int = 200, crack_width: int = 0,
                crack_contrast: float = 0.35) -> tuple[np.ndarray, tuple[float, float]]:

@@ -112,6 +112,19 @@ def trim_pores(lab: np.ndarray, im_norm: np.ndarray, level: float, band: int = 3
     return out
 
 
+def drop_vertical_cracks(lab: np.ndarray, max_angle_deg: float = 25.0, min_len: int = 6, replace: int = 2) -> np.ndarray:
+    """Relabel crack components whose major axis lies within ``max_angle_deg`` of the
+    column (vertical) axis as ``replace`` (LCO): FIB curtaining leaves vertical dark
+    streaks, whereas cracks in these cathodes run along the lamellae."""
+    from skimage.measure import label, regionprops
+    out = lab.copy()
+    cc = label(lab == 4, connectivity=2)
+    for r in regionprops(cc):
+        if r.axis_major_length >= min_len and abs(np.degrees(r.orientation)) < max_angle_deg:
+            out[cc == r.label] = replace
+    return out
+
+
 def phase_fractions(lab: np.ndarray) -> dict[int, float]:
     from . import PHASES
     n = lab.size

@@ -26,8 +26,8 @@ from . import PHASES
 from .io import crop, destripe, list_slices, normalise, normalise_phases, read_labels, read_slice, write_labels
 from .features import DEFAULT_SIGMAS
 from .model import TrainingSet, load_model, predict, save_model, train
-from .postprocess import clean_labels, phase_fractions, place_solid_edges, pore_level_auto, snap_to_edges, solid_level_auto, trim_pores
-from .scribbles import auto_seeds, densify, load_scribbles, merge_labels
+from .postprocess import clean_labels, drop_vertical_cracks, phase_fractions, place_solid_edges, pore_level_auto, snap_to_edges, solid_level_auto, trim_pores
+from .scribbles import auto_seeds, curtaining_negatives, densify, load_scribbles, merge_labels
 from .viz import review_figure
 
 
@@ -88,7 +88,8 @@ def apply_edge_levels(lab, im_norm, pore_level=None, solid_level=None, band=3, v
 
 def build_training_labels(im_norm, scribble_path=None, label_path=None, auto=False,
                           auto_erode=3, auto_margin=0.35, dense=False, drop_boundary=1,
-                          pore_level=None, band=3, solid_level=None, crack_width=0, crack_contrast=0.35):
+                          pore_level=None, band=3, solid_level=None, crack_width=0, crack_contrast=0.35,
+                          curtain_neg=False):
     parts = []
     if auto:
         seeds, (t1, t2) = auto_seeds(im_norm, erode=auto_erode, margin=auto_margin,
@@ -103,6 +104,11 @@ def build_training_labels(im_norm, scribble_path=None, label_path=None, auto=Fal
     if not parts:
         sys.exit("no training labels given (use --auto-seeds, --scribbles or --labels)")
     lab = merge_labels(*parts)
+    if curtain_neg:
+        cn = curtaining_negatives(im_norm)
+        cn &= lab != 4
+        lab[cn] = 5
+        print(f"  curtaining negatives: {int(cn.sum())} px")
     cracks = lab == 4
     notcrack = lab == 5                      # "not crack" marks: take the phase the watershed gives, always train on them
     force = np.zeros(lab.shape, dtype=bool)
@@ -143,16 +149,19 @@ def cmd_train(a):
         print(f"[train] {img}")
         im = _load_norm(img, a.lo, a.hi, a.smooth, a.norm or "bounds", a.crop, a.destripe)
         lab, force = build_training_labels(im, s, l, a.auto_seeds, a.auto_erode, a.auto_margin, a.dense, a.drop_boundary,
-                                           a.pore_level, a.band, a.solid_level, a.crack_width, a.crack_contrast)
+                                           a.pore_level, a.band, a.solid_level, a.crack_width, a.crack_contrast,
+                                           a.curtaining_negatives)
         print("  labels used: " + ", ".join(f"{PHASES[k]}={int((lab == k).sum())}" for k in PHASES))
-        ts.add(im, lab, sigmas=sigmas, max_per_class=a.max_per_class, boundary_frac=a.boundary_frac, force=force)
+        ts.add(im, lab, sigmas=sigmas, max_per_class=a.max_per_class, boundary_frac=a.boundary_frac, force=force,
+               oriented=a.oriented)
     t0 = time.time()
     mf = a.max_features
     mf = None if mf == "all" else (float(mf) if mf.replace(".", "", 1).isdigit() else mf)
     cw = "balanced" if a.class_weight == "balanced" else (None if a.class_weight == "none" else {1: 1, 2: 1, 3: 1, 4: float(a.class_weight)})
     rf = train(ts, n_estimators=a.trees, max_depth=a.max_depth, max_features=mf, class_weight=cw)
     print(f"[train] {len(ts.arrays()[1])} samples, {a.trees} trees, {time.time() - t0:.1f}s, OOB accuracy {rf.oob_score_:.4f}")
-    save_model(rf, a.model, sigmas=sigmas, norm={"lo": a.lo, "hi": a.hi, "smooth": a.smooth, "norm": a.norm or "bounds", "destripe": a.destripe})
+    save_model(rf, a.model, sigmas=sigmas, norm={"lo": a.lo, "hi": a.hi, "smooth": a.smooth, "norm": a.norm or "bounds", "destripe": a.destripe},
+               oriented=a.oriented)
     print(f"[train] saved {a.model}")
 
 
@@ -162,6 +171,8 @@ def _postprocess(lab, im, a):
     lab = apply_edge_levels(lab, im, a.pore_level, a.solid_level, a.band)
     if a.min_size > 0:
         lab = clean_labels(lab, min_size=a.min_size, majority_radius=a.majority)
+    if a.drop_vertical is not None and a.drop_vertical > 0:
+        lab = drop_vertical_cracks(lab, max_angle_deg=a.drop_vertical)
     return lab
 
 
@@ -258,6 +269,8 @@ def main(argv=None):
     t.add_argument("--auto-margin", type=float, default=0.35)
     t.add_argument("--crack-width", type=int, default=0, help="add automatic crack seeds (class 4): max half-width in px of a dark line counted as crack; 0 = off")
     t.add_argument("--crack-contrast", type=float, default=0.35, help="crack seed depth as a fraction of the LCO-pore grey difference")
+    t.add_argument("--curtaining-negatives", action="store_true", help="label vertical dark ridges (FIB curtaining) automatically as 'not crack'")
+    t.add_argument("--oriented", action="store_true", help="add orientation-sensitive features (row/column Hessian and gradients) so vertical curtaining and inclined cracks can be told apart")
     t.add_argument("--dense", action="store_true", help="propagate seeds/scribbles to all pixels with a watershed before sampling")
     t.add_argument("--drop-boundary", type=int, default=1, help="with --dense: unlabel pixels this close to watershed lines")
     t.add_argument("--max-per-class", type=int, default=20000)
@@ -283,6 +296,7 @@ def main(argv=None):
     pr.add_argument("--pore-level", default=None, help="re-place pore edges at this grey level (0-1) or 'auto' (multi-Otsu)")
     pr.add_argument("--solid-level", default=None, help="re-place LCO/LLZTO edges at this grey level (0-1) or 'auto' (multi-Otsu)")
     pr.add_argument("--band", type=int, default=3)
+    pr.add_argument("--drop-vertical", type=float, default=None, metavar="DEG", help="relabel crack components within DEG of vertical as LCO (FIB curtaining streaks)")
     pr.add_argument("--snap", type=int, default=-1, metavar="ERODE", help="snap boundaries to grey edges by watershed (erode radius for markers, e.g. 2; -1 = off)")
     pr.add_argument("--per-phase", action="store_true", help="also write one binary mask per phase and slice into <out>/pore, <out>/LCO, <out>/LLZTO")
     pr.add_argument("--stack", action="store_true", help="also write one multipage TIFF per phase (and labels_stack.tif) for the whole stack")
@@ -303,6 +317,7 @@ def main(argv=None):
     r.add_argument("--pore-level", default=None, help="re-place pore edges at this grey level (0-1) or 'auto' (multi-Otsu)")
     r.add_argument("--solid-level", default=None, help="re-place LCO/LLZTO edges at this grey level (0-1) or 'auto' (multi-Otsu)")
     r.add_argument("--band", type=int, default=3)
+    r.add_argument("--drop-vertical", type=float, default=None, metavar="DEG", help="relabel crack components within DEG of vertical as LCO (FIB curtaining streaks)")
     r.add_argument("--snap", type=int, default=-1, metavar="ERODE", help="snap boundaries to grey edges by watershed (erode radius for markers, e.g. 2; -1 = off)")
     _norm_args(r)
     r.set_defaults(func=cmd_review)
