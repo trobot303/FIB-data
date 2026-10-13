@@ -27,15 +27,27 @@ def load(folder, name, size, step):
     return np.stack(slices)
 
 
-def surface(mask, spacing, smooth_sigma=1.0, level=0.5):
+def surface(mask, spacing, smooth_sigma=1.0, level=0.5, chunk=120, reduction=0.0, z0=0):
     """Iso-surface of a (z, y, x) mask in a coordinate frame where X = image columns,
-    Y = image rows (through-thickness, drawn vertical) and Z = slice index (milling)."""
+    Y = image rows (through-thickness, drawn vertical) and Z = slice index (milling).
+    Large volumes are processed in z-chunks (with overlap) and optionally decimated
+    (``reduction`` = fraction of triangles removed) so that a 1000^3 LCO surface fits in memory."""
     import pyvista as pv
+    if mask.shape[0] > chunk:
+        parts = []
+        for a in range(0, mask.shape[0], chunk):
+            b = min(mask.shape[0], a + chunk + 1)
+            parts.append(surface(mask[a:b], spacing, smooth_sigma, level, chunk=10**9, reduction=reduction, z0=z0 + a))
+            print(f"    LCO surface chunk {a}-{b}: {parts[-1].n_cells} triangles", flush=True)
+        return pv.merge(parts) if len(parts) > 1 else parts[0]
     vol = ndi.gaussian_filter(mask.astype(np.float32), smooth_sigma) if smooth_sigma > 0 else mask.astype(np.float32)
     vol = np.ascontiguousarray(vol.transpose(2, 1, 0))           # (x, y, z)
-    grid = pv.ImageData(dimensions=np.array(vol.shape) + 1, spacing=spacing)
+    grid = pv.ImageData(dimensions=np.array(vol.shape) + 1, spacing=spacing, origin=(0, 0, z0 * spacing[2]))
     grid.cell_data["v"] = vol.ravel(order="F")
-    return grid.cell_data_to_point_data().contour([level], scalars="v")
+    surf = grid.cell_data_to_point_data().contour([level], scalars="v")
+    if reduction > 0 and surf.n_cells > 0:
+        surf = surf.triangulate().decimate_pro(reduction, preserve_topology=True)
+    return surf
 
 
 def main():
@@ -43,7 +55,8 @@ def main():
     ap.add_argument("folder")
     ap.add_argument("--out", default="render_cracks_3d.png")
     ap.add_argument("--size", type=int, default=1000)
-    ap.add_argument("--lco-step", type=int, default=4, help="downsampling of the LCO surface (4 -> 250^3 grid)")
+    ap.add_argument("--lco-step", type=int, default=1, help="downsampling of the LCO surface (1 = same grid as the cracks; 4 -> 250^3 grid, much faster)")
+    ap.add_argument("--lco-decimate", type=float, default=0.8, help="fraction of LCO triangles removed after extraction (0 = keep all)")
     ap.add_argument("--crack-step", type=int, default=1, help="downsampling of the crack surface")
     ap.add_argument("--crack-dilate", type=int, default=1, help="dilate cracks by this many voxels so 1-px cracks are visible")
     ap.add_argument("--lco-opacity", type=float, default=0.15)
@@ -57,7 +70,8 @@ def main():
     um = a.voxel_um
     lco = load(a.folder, "LCO", a.size, a.lco_step)
     print("LCO grid", lco.shape)
-    lco_surf = surface(lco, (um * a.lco_step,) * 3, smooth_sigma=1.0)
+    lco_surf = surface(lco, (um * a.lco_step,) * 3, smooth_sigma=1.0, reduction=a.lco_decimate)
+    del lco
     crack = load(a.folder, "crack", a.size, a.crack_step)
     if a.crack_dilate > 0:
         crack = ndi.binary_dilation(crack, iterations=a.crack_dilate)
