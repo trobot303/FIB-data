@@ -28,6 +28,7 @@ ap.add_argument("--grains-downsample", type=int, default=2)
 ap.add_argument("--n-workers", type=int, default=8)
 ap.add_argument("--max-seconds", type=float, default=None, help="wall-time limit per tortuosity solve (default: none)")
 ap.add_argument("--max-iterations", type=int, default=200000)
+ap.add_argument("--tortuosity-phases", nargs="+", default=None, help="phases to solve (default: keep the template, lco llzto)")
 a = ap.parse_args()
 
 root = Path(a.data_root)
@@ -65,6 +66,8 @@ cfg["samples"] = samples
 cfg["tortuosity"]["downsample"] = a.tortuosity_downsample
 cfg["tortuosity"]["taufactor"]["max_seconds"] = a.max_seconds
 cfg["tortuosity"]["taufactor"]["max_iterations"] = a.max_iterations
+if a.tortuosity_phases:
+    cfg["tortuosity"]["phases"] = list(a.tortuosity_phases)
 cfg["grains"]["downsample"] = a.grains_downsample
 cfg["plotting"]["sample_colors"] = {k: v for k, v in cfg["plotting"]["sample_colors"].items()}
 with open(a.out, "w") as fh:
