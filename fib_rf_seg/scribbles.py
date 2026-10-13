@@ -9,6 +9,12 @@ Scribble files are JSON::
 Each stroke is a polyline in (row, col) pixel coordinates rasterised with a
 round brush of radius ``brush`` (per-stroke ``"brush"`` overrides it).  Scribbles
 drawn in ImageJ/napari/GIMP can instead be supplied as a label image.
+Phase 5 is a sentinel meaning "not a crack": the pixel keeps the phase the
+watershed assigns and is always included in training.
+
+``annotation_to_scribbles`` converts an RGB copy of a slice painted in a
+drawing program (pure red = crack, light green = not crack) into this format,
+snapping red strokes onto the local dark-line centre.
 """
 from __future__ import annotations
 
@@ -130,3 +136,33 @@ def merge_labels(*labels: np.ndarray) -> np.ndarray:
     for lab in labels:
         out[lab > 0] = lab[lab > 0]
     return out
+
+
+def annotation_to_scribbles(annotated_path, im_norm: np.ndarray, out_json, snap: int = 2):
+    """Red strokes (crack, snapped + skeletonised) and light-green strokes (not crack) -> scribble JSON."""
+    import json
+    import tifffile
+    from skimage.morphology import closing, skeletonize
+    from skimage.io import imread
+    p = str(annotated_path)
+    a = tifffile.imread(p) if p.lower().endswith((".tif", ".tiff")) else imread(p)
+    a = a[..., :3].astype(int)
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    scale = 256 if a.max() > 255 else 1
+    red = ((r - np.maximum(g, b)) > 60 * scale) & (r > 140 * scale)
+    green = ((g - np.maximum(r, b)) > 40 * scale) & (g > 140 * scale)
+    th = closing(im_norm, sk_disk(3)) - im_norm
+    snapped = np.zeros_like(red)
+    for y, x in zip(*np.nonzero(red)):
+        y0, y1, x0, x1 = max(0, y - snap), min(th.shape[0], y + snap + 1), max(0, x - snap), min(th.shape[1], x + snap + 1)
+        w = th[y0:y1, x0:x1]; iy, ix = np.unravel_index(np.argmax(w), w.shape); snapped[y0 + iy, x0 + ix] = True
+    snapped = skeletonize(ndi.binary_closing(snapped, iterations=1))
+    strokes = []
+    for phase, mask in ((4, snapped), (5, green)):
+        lab, n = ndi.label(mask, np.ones((3, 3)))
+        for i in range(1, n + 1):
+            yy, xx = np.nonzero(lab == i)
+            strokes.append({"phase": phase, "brush": 0, "points": [[int(u), int(v)] for u, v in zip(yy, xx)]})
+    with open(out_json, "w") as fh:
+        json.dump({"brush": 0, "strokes": strokes}, fh)
+    return int(snapped.sum()), int(green.sum())

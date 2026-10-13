@@ -104,10 +104,14 @@ def build_training_labels(im_norm, scribble_path=None, label_path=None, auto=Fal
         sys.exit("no training labels given (use --auto-seeds, --scribbles or --labels)")
     lab = merge_labels(*parts)
     cracks = lab == 4
+    notcrack = lab == 5                      # "not crack" marks: take the phase the watershed gives, always train on them
+    force = np.zeros(lab.shape, dtype=bool)
     if dense:
         from scipy import ndimage as ndi
-        lab[cracks] = 0
+        lab[cracks | notcrack] = 0
         lab = densify(im_norm, lab, drop_boundary=0)
+        if notcrack.any():
+            dense0 = lab.copy()
         print("  densified by watershed: " + ", ".join(f"{PHASES[k]}={int((lab == k).sum())}" for k in PHASES))
         lab = apply_edge_levels(lab, im_norm, pore_level, solid_level, band, verbose=True)
         if drop_boundary > 0:
@@ -120,7 +124,13 @@ def build_training_labels(im_norm, scribble_path=None, label_path=None, auto=Fal
             lab[ndi.binary_dilation(cracks, iterations=3)] = 0
             lab[ndi.binary_dilation(cracks, iterations=1)] = 4
             print(f"  crack scribbles: {int((lab == 4).sum())} px")
-    return lab
+        if notcrack.any():
+            lab[notcrack] = dense0[notcrack]
+            force = notcrack & (lab > 0) & (lab != 4)
+            print(f"  not-crack marks: {int(force.sum())} px -> " + ", ".join(f"{PHASES[k]}={int((lab[force] == k).sum())}" for k in (1, 2, 3)))
+    else:
+        lab[notcrack] = 0
+    return lab, force
 
 
 def cmd_train(a):
@@ -132,10 +142,10 @@ def cmd_train(a):
     for img, s, l in zip(a.image, scr[:n], labs[:n]):
         print(f"[train] {img}")
         im = _load_norm(img, a.lo, a.hi, a.smooth, a.norm or "bounds", a.crop, a.destripe)
-        lab = build_training_labels(im, s, l, a.auto_seeds, a.auto_erode, a.auto_margin, a.dense, a.drop_boundary,
-                                    a.pore_level, a.band, a.solid_level, a.crack_width, a.crack_contrast)
+        lab, force = build_training_labels(im, s, l, a.auto_seeds, a.auto_erode, a.auto_margin, a.dense, a.drop_boundary,
+                                           a.pore_level, a.band, a.solid_level, a.crack_width, a.crack_contrast)
         print("  labels used: " + ", ".join(f"{PHASES[k]}={int((lab == k).sum())}" for k in PHASES))
-        ts.add(im, lab, sigmas=sigmas, max_per_class=a.max_per_class, boundary_frac=a.boundary_frac)
+        ts.add(im, lab, sigmas=sigmas, max_per_class=a.max_per_class, boundary_frac=a.boundary_frac, force=force)
     t0 = time.time()
     mf = a.max_features
     mf = None if mf == "all" else (float(mf) if mf.replace(".", "", 1).isdigit() else mf)

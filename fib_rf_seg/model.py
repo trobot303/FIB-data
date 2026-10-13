@@ -19,7 +19,7 @@ class TrainingSet:
 
     def add(self, im_norm: np.ndarray, labels: np.ndarray, sigmas=DEFAULT_SIGMAS,
             max_per_class: int | None = 20000, rng: np.random.Generator | None = None,
-            boundary_frac: float = 0.0, boundary_dist: int = 4) -> None:
+            boundary_frac: float = 0.0, boundary_dist: int = 4, force: np.ndarray | None = None) -> None:
         """Sample up to *max_per_class* labelled pixels per phase.
 
         With ``boundary_frac`` > 0, that share of each class's samples is drawn
@@ -35,10 +35,13 @@ class TrainingSet:
             from skimage.segmentation import find_boundaries
             b = find_boundaries(labels, mode="thick") & (labels > 0)
             near = ndi.binary_dilation(b, iterations=boundary_dist).ravel()
+        forced = force.ravel() if force is not None else None
         for cls in np.unique(labels):
             if cls == 0:
                 continue
             idx = np.flatnonzero(labels.ravel() == cls)
+            keep_idx = idx[forced[idx]] if forced is not None else idx[:0]   # always-included pixels (e.g. "not crack" marks)
+            idx = idx[~forced[idx]] if forced is not None else idx
             if max_per_class and idx.size > max_per_class:
                 if near is not None:
                     nb = idx[near[idx]]; nin = idx[~near[idx]]
@@ -48,6 +51,7 @@ class TrainingSet:
                                           rng.choice(nin, n_i, replace=False) if n_i else nin[:0]])
                 else:
                     idx = rng.choice(idx, max_per_class, replace=False)
+            idx = np.concatenate([idx, keep_idx])
             self.X.append(Ff[idx])
             self.y.append(np.full(idx.size, cls, dtype=np.uint8))
 
