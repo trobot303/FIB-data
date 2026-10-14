@@ -18,13 +18,38 @@ from scipy import ndimage as ndi
 
 
 def load(folder, name, size, step):
+    """(z, y, x) bool mask from <folder>/<name>_stack.tif; size = 0 keeps the whole stack."""
     p = Path(folder) / f"{name}_stack.tif"
     with tifffile.TiffFile(str(p)) as t:
-        n = len(t.series[0].shape) and t.series[0].shape[0]
         pages = t.series[0].shape[0]
-        zs = range(0, min(size, pages), step)
-        slices = [t.pages[i].asarray()[:size:step, :size:step] > 0 for i in zs]
+        n = pages if size <= 0 else min(size, pages)
+        lim = None if size <= 0 else size
+        slices = [t.pages[i].asarray()[:lim:step, :lim:step] > 0 for i in range(0, n, step)]
     return np.stack(slices)
+
+
+def load_blocks(base, name, step, stack_name):
+    """Assemble the z-blocks of a shear-corrected stack into one canvas.
+
+    Expects <base>/block*/ each holding <stack_name>.tif-style phase stacks written by
+    fib_rf_seg predict, and <base>/blocks.csv (realign_stack.py) with columns z0, z1,
+    y_top: block b covers slices z0..z1-1 and its rows start at canvas row y_top."""
+    import csv
+    base = Path(base)
+    dirs = sorted(d for d in base.iterdir() if d.is_dir() and d.name.startswith("block"))
+    rows = list(csv.DictReader(open(base / "blocks.csv")))
+    if len(rows) != len(dirs):
+        raise SystemExit(f"{len(dirs)} block folders but {len(rows)} rows in blocks.csv")
+    stacks = [load(d, name, 0, step) for d in dirs]
+    H = max(int(r["y_top"]) // step + st.shape[1] for r, st in zip(rows, stacks))
+    W = max(st.shape[2] for st in stacks)
+    Z = max(int(r["z1"]) for r in rows) // step
+    vol = np.zeros((Z, H, W), dtype=bool)
+    for r, st in zip(rows, stacks):
+        z0, y0 = int(r["z0"]) // step, int(r["y_top"]) // step
+        vol[z0:z0 + st.shape[0], y0:y0 + st.shape[1], :st.shape[2]] = st
+        print(f"  {name}: block z {z0 * step}-{(z0 + st.shape[0]) * step} placed at rows {y0 * step}:{(y0 + st.shape[1]) * step}", flush=True)
+    return vol
 
 
 def surface(mask, spacing, smooth_sigma=1.0, level=0.5, chunk=120, reduction=0.0, z0=0):
@@ -61,43 +86,50 @@ def main():
     ap.add_argument("--crack-dilate", type=int, default=1, help="dilate cracks by this many voxels so 1-px cracks are visible")
     ap.add_argument("--lco-opacity", type=float, default=0.15)
     ap.add_argument("--show-llzto", action="store_true", help="also draw LLZTO (light, semi-transparent)")
-    ap.add_argument("--voxel-um", type=float, default=0.05)
+    ap.add_argument("--voxel-um", type=float, nargs="+", default=[0.05], help="voxel size in um: one value, or three (x y z)")
+    ap.add_argument("--blocks", action="store_true", help="<folder> holds block*/ sub-stacks plus blocks.csv (shear-corrected stack); assemble them")
     ap.add_argument("--window", type=int, nargs=2, default=(1800, 1600))
     ap.add_argument("--interactive", action="store_true", help="open an interactive window instead of writing a PNG")
     a = ap.parse_args()
     import pyvista as pv
 
-    um = a.voxel_um
-    lco = load(a.folder, "LCO", a.size, a.lco_step)
+    v = a.voxel_um if len(a.voxel_um) == 3 else a.voxel_um * 3
+    vx, vy, vz = v
+    if a.blocks:
+        lco = load_blocks(a.folder, "LCO", a.lco_step, "LCO_stack.tif")
+    else:
+        lco = load(a.folder, "LCO", a.size, a.lco_step)
     print("LCO grid", lco.shape)
-    lco_surf = surface(lco, (um * a.lco_step,) * 3, smooth_sigma=1.0, reduction=a.lco_decimate)
+    extent = (lco.shape[2] * a.lco_step * vx, lco.shape[1] * a.lco_step * vy, lco.shape[0] * a.lco_step * vz)
+    lco_surf = surface(lco, (vx * a.lco_step, vy * a.lco_step, vz * a.lco_step), smooth_sigma=1.0, reduction=a.lco_decimate)
     del lco
-    crack = load(a.folder, "crack", a.size, a.crack_step)
+    crack = load_blocks(a.folder, "crack", a.crack_step, "crack_stack.tif") if a.blocks else load(a.folder, "crack", a.size, a.crack_step)
     if a.crack_dilate > 0:
         crack = ndi.binary_dilation(crack, iterations=a.crack_dilate)
     print("crack grid", crack.shape, f"{crack.mean()*100:.2f}% of voxels")
-    crack_surf = surface(crack, (um * a.crack_step,) * 3, smooth_sigma=0.5)
+    crack_surf = surface(crack, (vx * a.crack_step, vy * a.crack_step, vz * a.crack_step), smooth_sigma=0.5)
     print("triangles: LCO", lco_surf.n_cells, "crack", crack_surf.n_cells)
 
     pl = pv.Plotter(off_screen=not a.interactive, window_size=list(a.window))
     pl.set_background("white")
-    L = a.size * um
-    pl.add_mesh(pv.Cube(center=(L / 2, L / 2, L / 2), x_length=L, y_length=L, z_length=L).extract_all_edges(),
+    Lx, Ly, Lz = extent
+    pl.add_mesh(pv.Cube(center=(Lx / 2, Ly / 2, Lz / 2), x_length=Lx, y_length=Ly, z_length=Lz).extract_all_edges(),
                 color="black", line_width=1.5)
     pl.add_mesh(lco_surf, color=(0.55, 0.6, 0.65), opacity=a.lco_opacity, smooth_shading=True, specular=0.2)
     if a.show_llzto:
-        llz = load(a.folder, "LLZTO", a.size, a.lco_step)
-        pl.add_mesh(surface(llz, (um * a.lco_step,) * 3), color=(0.95, 0.9, 0.7), opacity=0.08, smooth_shading=True)
+        llz = load_blocks(a.folder, "LLZTO", a.lco_step, "LLZTO_stack.tif") if a.blocks else load(a.folder, "LLZTO", a.size, a.lco_step)
+        pl.add_mesh(surface(llz, (vx * a.lco_step, vy * a.lco_step, vz * a.lco_step)), color=(0.95, 0.9, 0.7), opacity=0.08, smooth_shading=True)
     pl.add_mesh(crack_surf, color="red", opacity=1.0, smooth_shading=True)
     # dimetric: parallel projection, viewed from a direction where two axes are equally foreshortened
     pl.camera.parallel_projection = True
-    pl.camera.position = (L / 2 + 2.2 * L, L / 2 + 1.0 * L, L / 2 + 1.6 * L)   # two axes equally foreshortened
-    pl.camera.focal_point = (L / 2, L / 2, L / 2)
+    L = max(extent)
+    pl.camera.position = (Lx / 2 + 2.2 * L, Ly / 2 + 1.0 * L, Lz / 2 + 1.6 * L)   # two axes equally foreshortened
+    pl.camera.focal_point = (Lx / 2, Ly / 2, Lz / 2)
     pl.camera.up = (0, -1, 0)                                                 # y (image rows) grows downwards: collector on top
     pl.reset_camera()
     pl.camera.zoom(1.3)
     pl.add_axes(xlabel="x", ylabel="y (thickness)", zlabel="z (milling)")
-    pl.add_text(f"LCO (grey, {a.lco_opacity:.0%} opaque) and cracks (red)   {L:.0f} x {L:.0f} x {L:.0f} um", font_size=12, color="black")
+    pl.add_text(f"LCO (grey, {a.lco_opacity:.0%} opaque) and cracks (red)   {Lx:.0f} x {Ly:.0f} x {Lz:.0f} um (x, y, z)", font_size=12, color="black")
     if a.interactive:
         pl.show()
     else:
