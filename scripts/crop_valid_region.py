@@ -70,6 +70,9 @@ def main():
                     help="common: one rectangle valid in every slice (keeps the alignment); "
                          "per-slice: each slice cropped to its own content box (removes all black, but undoes the alignment)")
     ap.add_argument("--z", type=int, nargs=2, default=None, metavar=("Z0", "Z1"), help="use only slices Z0..Z1-1")
+    ap.add_argument("--blocks", type=int, default=0, metavar="N",
+                    help="split the stack into N z-blocks and crop each block to the rectangle valid in all of its slices "
+                         "(for shear-corrected stacks whose content drifts along the canvas); writes <out>/block_<i>/")
     a = ap.parse_args()
     src = Path(a.folder)
     files = sorted([p for p in src.iterdir() if p.suffix.lower() in (".tif", ".tiff")], key=natural_key)
@@ -97,6 +100,30 @@ def main():
     print(f"  first slice rows {boxes[0, 0]}:{boxes[0, 1]} cols {boxes[0, 2]}:{boxes[0, 3]};  last slice rows {boxes[-1, 0]}:{boxes[-1, 1]} cols {boxes[-1, 2]}:{boxes[-1, 3]}")
     print(f"valid in ALL slices: {valid.mean() * 100:.1f}% of pixels")
     out = Path(a.out) if a.out else src.parent / (src.name + "_cropped")
+    if a.blocks > 0:
+        edges = np.linspace(0, len(files), a.blocks + 1).astype(int)
+        print(f"block-wise crop, {a.blocks} blocks:")
+        plan = []
+        for b in range(a.blocks):
+            z0, z1 = edges[b], edges[b + 1]
+            # rows/cols valid in every slice of the block = intersection of the content boxes
+            y0, y1 = int(boxes[z0:z1, 0].max()) + a.margin, int(boxes[z0:z1, 1].min()) - a.margin
+            x0, x1 = int(boxes[z0:z1, 2].max()) + a.margin, int(boxes[z0:z1, 3].min()) - a.margin
+            plan.append((z0, z1, y0, y1, x0, x1))
+            print(f"  block {b}: slices {z0}-{z1 - 1}, rows {y0}:{y1}, cols {x0}:{x1} -> {y1 - y0} x {x1 - x0} px "
+                  f"({(y1 - y0) / (boxes[z0, 1] - boxes[z0, 0]):.0%} of the content rows)")
+        if a.dry_run:
+            return
+        for b, (z0, z1, y0, y1, x0, x1) in enumerate(plan):
+            bdir = out / f"block_{b}"; bdir.mkdir(parents=True, exist_ok=True)
+            for f in files[z0:z1]:
+                im = tifffile.imread(str(f))
+                tifffile.imwrite(str(bdir / f.name), im[y0:y1, x0:x1])
+            with open(bdir / "crop_info.txt", "w") as fh:
+                fh.write(f"source {src}\nslices {z0}:{z1}\nrows {y0}:{y1}\ncols {x0}:{x1}\n")
+            print(f"  wrote block {b} -> {bdir}", flush=True)
+        print("done:", out)
+        return
     if a.mode == "per-slice":
         hh, ww = int((boxes[:, 1] - boxes[:, 0]).min()), int((boxes[:, 3] - boxes[:, 2]).min())
         hh, ww = hh - 2 * a.margin, ww - 2 * a.margin
