@@ -66,29 +66,61 @@ def main():
     ap.add_argument("--margin", type=int, default=2, help="extra pixels removed on every side")
     ap.add_argument("--min-area", type=int, default=2000, help="smallest border-touching black region counted as excluded area (px)")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--mode", choices=("common", "per-slice"), default="common",
+                    help="common: one rectangle valid in every slice (keeps the alignment); "
+                         "per-slice: each slice cropped to its own content box (removes all black, but undoes the alignment)")
+    ap.add_argument("--z", type=int, nargs=2, default=None, metavar=("Z0", "Z1"), help="use only slices Z0..Z1-1")
     a = ap.parse_args()
     src = Path(a.folder)
     files = sorted([p for p in src.iterdir() if p.suffix.lower() in (".tif", ".tiff")], key=natural_key)
     if not files:
         raise SystemExit(f"no TIFF slices in {src}")
+    if a.z:
+        files = files[a.z[0]:a.z[1]]
     valid = None
+    boxes = []
     for i, f in enumerate(files):
         im = tifffile.imread(str(f))
         if im.ndim == 3:
             im = im[..., 0]
         v = ~excluded_area(im, a.threshold, a.min_area)
+        ys, xs = np.nonzero(v)
+        boxes.append((int(ys.min()), int(ys.max()) + 1, int(xs.min()), int(xs.max()) + 1) if ys.size else (0, 0, 0, 0))
         valid = v if valid is None else (valid & v)
         if i % 100 == 0:
             print(f"  scanned {i + 1}/{len(files)} slices, valid pixels so far {valid.mean() * 100:.1f}%", flush=True)
     h, w = valid.shape
+    boxes = np.array(boxes)
+    print(f"{len(files)} slices of {h} x {w}")
+    print(f"content box per slice: rows start {boxes[:, 0].min()}..{boxes[:, 0].max()}, rows end {boxes[:, 1].min()}..{boxes[:, 1].max()}, "
+          f"cols start {boxes[:, 2].min()}..{boxes[:, 2].max()}, cols end {boxes[:, 3].min()}..{boxes[:, 3].max()}")
+    print(f"  first slice rows {boxes[0, 0]}:{boxes[0, 1]} cols {boxes[0, 2]}:{boxes[0, 3]};  last slice rows {boxes[-1, 0]}:{boxes[-1, 1]} cols {boxes[-1, 2]}:{boxes[-1, 3]}")
+    print(f"valid in ALL slices: {valid.mean() * 100:.1f}% of pixels")
+    out = Path(a.out) if a.out else src.parent / (src.name + "_cropped")
+    if a.mode == "per-slice":
+        hh, ww = int((boxes[:, 1] - boxes[:, 0]).min()), int((boxes[:, 3] - boxes[:, 2]).min())
+        hh, ww = hh - 2 * a.margin, ww - 2 * a.margin
+        print(f"per-slice mode: every slice cropped to its own content box, size {hh} x {ww} px (the smallest box, minus margin); alignment is NOT preserved")
+        if a.dry_run:
+            return
+        out.mkdir(parents=True, exist_ok=True)
+        for i, (f, (y0, y1, x0, x1)) in enumerate(zip(files, boxes)):
+            im = tifffile.imread(str(f))
+            cy, cx = (y0 + y1) // 2, (x0 + x1) // 2
+            tifffile.imwrite(str(out / f.name), im[cy - hh // 2:cy - hh // 2 + hh, cx - ww // 2:cx - ww // 2 + ww])
+            if i % 100 == 0:
+                print(f"  wrote {i + 1}/{len(files)}", flush=True)
+        print("done:", out)
+        return
     y0, y1, x0, x1 = largest_rectangle(valid)
     y0, x0 = y0 + a.margin, x0 + a.margin
     y1, x1 = y1 - a.margin, x1 - a.margin
-    print(f"{len(files)} slices of {h} x {w}; valid in all slices: {valid.mean() * 100:.1f}% of pixels")
+    if y1 - y0 < 10 or x1 - x0 < 10:
+        raise SystemExit("no usable region is valid in every slice: the content drifts across the canvas. "
+                         "Use --z Z0 Z1 for a sub-range of slices, or --mode per-slice (drops the alignment).")
     print(f"crop rectangle: rows {y0}:{y1}, cols {x0}:{x1}  ->  {y1 - y0} x {x1 - x0} px  ({(y1 - y0) * 0.05:.1f} x {(x1 - x0) * 0.05:.1f} um at 50 nm/px)")
     if a.dry_run:
         return
-    out = Path(a.out) if a.out else src.parent / (src.name + "_cropped")
     out.mkdir(parents=True, exist_ok=True)
     for i, f in enumerate(files):
         im = tifffile.imread(str(f))
