@@ -55,17 +55,40 @@ def load_blocks(base, name, step, stack_name):
     ycols = [a_ytop] + ["y_top", "ytop", "y0", "row0", "row_start", "rows_start", "top", "y_min", "ymin", "y_start"]
     z0cols = [a_z0] + ["z0", "z_start", "zstart", "z_min", "zmin", "slice0", "first_slice"]
     z1cols = [a_z1] + ["z1", "z_end", "zend", "z_max", "zmax", "slice1", "last_slice"]
+    # per-slice shift table (realign_stack.py): y_top of a block = max shift over its slices
+    shifts = None
+    for cand in (base / "shift_table.csv", base.parent / "shift_table.csv", base.parent / "aligned" / "shift_table.csv"):
+        if cand.exists():
+            tab = list(csv.DictReader(open(cand)))
+            col = next((k for k in tab[0] if "shift" in k.lower() and "row" in k.lower()), None) or \
+                  next((k for k in tab[0] if "shift" in k.lower()), None)
+            shifts = np.array([int(float(t[col])) for t in tab])
+            print(f"  using {cand.name} column '{col}' for the block row offsets")
+            break
     stacks = [load(d, name, 0, step) for d in dirs]
     info = []
     for d, r, st in zip(dirs, rows, stacks):
-        y0 = pick(r, [c for c in ycols if c], "the first canvas row of the block (y_top)")
         m = re.search(r"z(\d+)-(\d+)", d.name)
         try:
             z0 = pick(r, [c for c in z0cols if c], "z0")
+            z1 = pick(r, [c for c in z1cols if c], "z1")
         except SystemExit:
             if not m:
                 raise
-            z0 = int(m.group(1)) - 1                   # folder names are 1-based global slice numbers
+            z0, z1 = int(m.group(1)) - 1, int(m.group(2))   # folder names are 1-based global slice numbers
+        y0 = None
+        for k in r:                                          # a "rows_kept" like "302:1230" or "302-1230"
+            mm = re.match(r"\s*(\d+)\s*[:\-]\s*(\d+)\s*$", str(r[k]))
+            if mm and k.strip().lower() in ("rows_kept", "rows", "row_range", "y_range"):
+                y0 = int(mm.group(1))
+        if y0 is None:
+            try:
+                y0 = pick(r, [c for c in ycols if c], "y_top")
+            except SystemExit:
+                if shifts is None:
+                    raise SystemExit("blocks.csv has no row-offset column and no shift_table.csv was found next to it; "
+                                     "pass --y-top-col or put shift_table.csv in the folder")
+                y0 = int(shifts[z0:z1].max())
         info.append((z0, y0, st))
     H = max(y0 // step + st.shape[1] for _, y0, st in info)
     W = max(st.shape[2] for st in stacks)
