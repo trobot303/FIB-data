@@ -191,7 +191,10 @@ def cmd_predict(a):
     if not files:
         sys.exit(f"no .tif/.tiff slices found in {a.input}")
     print(f"[predict] {len(files)} slices from {a.input}; norm={mode} lo={lo} hi={hi}; pre-smooth={smooth}; crop={box}")
-    (out / "labels").mkdir(exist_ok=True)
+    ldir = a.labels_subdir
+    stack_name = a.stack_name or ("labels_stack.tif" if ldir == "labels" else f"{ldir}_stack.tif")
+    frac_prefix = "fractions" if ldir == "labels" else f"{ldir}_fractions"
+    (out / ldir).mkdir(exist_ok=True)
     phase_dirs = {}
     if a.per_phase:
         for k, name in PHASES.items():
@@ -202,15 +205,15 @@ def cmd_predict(a):
     summary = {}
     t_start = time.time()
     for i, f in enumerate(files, 1):
-        if a.overwrite or not (out / "labels" / f"{f.stem}_labels.tif").exists():
+        if a.overwrite or not (out / ldir / f"{f.stem}_labels.tif").exists():
             im = _load_norm(f, lo, hi, smooth, mode, box, strip)
             lab, proba = predict(rf, im, sigmas)
             lab = _postprocess(lab, im, a)
-            write_labels(out / "labels" / f"{f.stem}_labels.tif", lab)
+            write_labels(out / ldir / f"{f.stem}_labels.tif", lab)
             if a.save_proba:
                 np.save(out / f"{f.stem}_proba.npy", proba)
         else:
-            lab = read_labels(out / "labels" / f"{f.stem}_labels.tif")
+            lab = read_labels(out / ldir / f"{f.stem}_labels.tif")
         for k, d in phase_dirs.items():
             tifffile.imwrite(str(d / f"{f.stem}_{PHASES[k]}.tif"), ((lab == k) * hi_val).astype(np.uint8))
         if stacks is not None:
@@ -223,17 +226,17 @@ def cmd_predict(a):
         eta = el / i * (len(files) - i)
         print(f"[predict] {i}/{len(files)} {f.name}: " + ", ".join(f"{PHASES[k]}={fr[k]:.3f}" for k in PHASES)
               + f"   ({el/i:.1f} s/slice, ETA {eta/60:.1f} min)", flush=True)
-    with open(out / "fractions.json", "w") as fh:
+    with open(out / f"{frac_prefix}.json", "w") as fh:
         json.dump(summary, fh, indent=2)
-    with open(out / "fractions.csv", "w") as fh:
+    with open(out / f"{frac_prefix}.csv", "w") as fh:
         fh.write("slice," + ",".join(PHASES[k] for k in PHASES) + "\n")
         for name, fr in summary.items():
             fh.write(name + "," + ",".join(f"{fr[k]:.5f}" for k in PHASES) + "\n")
     if stacks is not None:
-        tifffile.imwrite(str(out / "labels_stack.tif"), np.stack(stacks[0]), compression="zlib", photometric="minisblack")
+        tifffile.imwrite(str(out / stack_name), np.stack(stacks[0]), compression="zlib", photometric="minisblack")
         for k in PHASES:
             tifffile.imwrite(str(out / f"{PHASES[k]}_stack.tif"), np.stack(stacks[k]), compression="zlib", photometric="minisblack")
-        print(f"[predict] wrote labels_stack.tif and one multipage stack per phase to {out}")
+        print(f"[predict] wrote {stack_name} and one multipage stack per phase to {out}")
     mean = {PHASES[k]: float(np.mean([fr[k] for fr in summary.values()])) for k in PHASES}
     print("[predict] mean fractions over stack: " + ", ".join(f"{n}={v:.3f}" for n, v in mean.items()))
 
@@ -302,6 +305,8 @@ def main(argv=None):
     pr.add_argument("--stack", action="store_true", help="also write one multipage TIFF per phase (and labels_stack.tif) for the whole stack")
     pr.add_argument("--binary-value", type=int, default=255, choices=(1, 255), help="foreground value of the binary masks")
     pr.add_argument("--overwrite", action="store_true", help="recompute slices whose labels already exist in <out>/labels (default: resume)")
+    pr.add_argument("--labels-subdir", default="labels", help="name of the per-slice label folder inside <out> (e.g. labels_v2)")
+    pr.add_argument("--stack-name", default=None, help="file name of the label stack (default: <labels-subdir>_stack.tif)")
     pr.add_argument("--save-proba", action="store_true")
     _norm_args(pr)
     pr.set_defaults(func=cmd_predict)
