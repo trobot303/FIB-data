@@ -28,6 +28,9 @@ def load(folder, name, size, step):
     return np.stack(slices)
 
 
+a_ytop = a_z0 = a_z1 = None
+
+
 def load_blocks(base, name, step, stack_name):
     """Assemble the z-blocks of a shear-corrected stack into one canvas.
 
@@ -35,18 +38,41 @@ def load_blocks(base, name, step, stack_name):
     fib_rf_seg predict, and <base>/blocks.csv (realign_stack.py) with columns z0, z1,
     y_top: block b covers slices z0..z1-1 and its rows start at canvas row y_top."""
     import csv
+    import re
     base = Path(base)
     dirs = sorted(d for d in base.iterdir() if d.is_dir() and d.name.startswith("block"))
     rows = list(csv.DictReader(open(base / "blocks.csv")))
     if len(rows) != len(dirs):
         raise SystemExit(f"{len(dirs)} block folders but {len(rows)} rows in blocks.csv")
+
+    def pick(r, names, what):
+        for n in names:
+            for k in r:
+                if k.strip().lower() == n:
+                    return int(float(r[k]))
+        raise SystemExit(f"blocks.csv has no column for {what}; columns are {list(r)}. "
+                         f"Pass --y-top-col / --z0-col / --z1-col with the right names.")
+    ycols = [a_ytop] + ["y_top", "ytop", "y0", "row0", "row_start", "rows_start", "top", "y_min", "ymin", "y_start"]
+    z0cols = [a_z0] + ["z0", "z_start", "zstart", "z_min", "zmin", "slice0", "first_slice"]
+    z1cols = [a_z1] + ["z1", "z_end", "zend", "z_max", "zmax", "slice1", "last_slice"]
     stacks = [load(d, name, 0, step) for d in dirs]
-    H = max(int(r["y_top"]) // step + st.shape[1] for r, st in zip(rows, stacks))
+    info = []
+    for d, r, st in zip(dirs, rows, stacks):
+        y0 = pick(r, [c for c in ycols if c], "the first canvas row of the block (y_top)")
+        m = re.search(r"z(\d+)-(\d+)", d.name)
+        try:
+            z0 = pick(r, [c for c in z0cols if c], "z0")
+        except SystemExit:
+            if not m:
+                raise
+            z0 = int(m.group(1)) - 1                   # folder names are 1-based global slice numbers
+        info.append((z0, y0, st))
+    H = max(y0 // step + st.shape[1] for _, y0, st in info)
     W = max(st.shape[2] for st in stacks)
-    Z = max(int(r["z1"]) for r in rows) // step
+    Z = max(z0 // step + st.shape[0] for z0, _, st in info)
     vol = np.zeros((Z, H, W), dtype=bool)
-    for r, st in zip(rows, stacks):
-        z0, y0 = int(r["z0"]) // step, int(r["y_top"]) // step
+    for z0, y0, st in info:
+        z0, y0 = z0 // step, y0 // step
         vol[z0:z0 + st.shape[0], y0:y0 + st.shape[1], :st.shape[2]] = st
         print(f"  {name}: block z {z0 * step}-{(z0 + st.shape[0]) * step} placed at rows {y0 * step}:{(y0 + st.shape[1]) * step}", flush=True)
     return vol
@@ -88,11 +114,16 @@ def main():
     ap.add_argument("--show-llzto", action="store_true", help="also draw LLZTO (light, semi-transparent)")
     ap.add_argument("--voxel-um", type=float, nargs="+", default=[0.05], help="voxel size in um: one value, or three (x y z)")
     ap.add_argument("--blocks", action="store_true", help="<folder> holds block*/ sub-stacks plus blocks.csv (shear-corrected stack); assemble them")
+    ap.add_argument("--y-top-col", default=None, help="blocks.csv column with the first canvas row of each block (auto-detected: y_top, y0, row0, ...)")
+    ap.add_argument("--z0-col", default=None, help="blocks.csv column with the first slice index (0-based) of each block; else taken from the folder name block*_zAAAA-BBBB")
+    ap.add_argument("--z1-col", default=None)
     ap.add_argument("--window", type=int, nargs=2, default=(1800, 1600))
     ap.add_argument("--interactive", action="store_true", help="open an interactive window instead of writing a PNG")
     a = ap.parse_args()
     import pyvista as pv
 
+    global a_ytop, a_z0, a_z1
+    a_ytop, a_z0, a_z1 = a.y_top_col, a.z0_col, a.z1_col
     v = a.voxel_um if len(a.voxel_um) == 3 else a.voxel_um * 3
     vx, vy, vz = v
     if a.blocks:
