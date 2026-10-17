@@ -19,7 +19,8 @@ class TrainingSet:
 
     def add(self, im_norm: np.ndarray, labels: np.ndarray, sigmas=DEFAULT_SIGMAS,
             max_per_class: int | None = 20000, rng: np.random.Generator | None = None,
-            boundary_frac: float = 0.0, boundary_dist: int = 4) -> None:
+            boundary_frac: float = 0.0, boundary_dist: int = 4, force: np.ndarray | None = None,
+            oriented: bool = False) -> None:
         """Sample up to *max_per_class* labelled pixels per phase.
 
         With ``boundary_frac`` > 0, that share of each class's samples is drawn
@@ -27,7 +28,7 @@ class TrainingSet:
         sees enough edge pixels to place boundaries precisely.
         """
         rng = rng or np.random.default_rng(0)
-        F = compute_features(im_norm, sigmas)
+        F = compute_features(im_norm, sigmas, oriented=oriented)
         Ff = F.reshape(-1, F.shape[-1])
         near = None
         if boundary_frac > 0:
@@ -35,10 +36,13 @@ class TrainingSet:
             from skimage.segmentation import find_boundaries
             b = find_boundaries(labels, mode="thick") & (labels > 0)
             near = ndi.binary_dilation(b, iterations=boundary_dist).ravel()
+        forced = force.ravel() if force is not None else None
         for cls in np.unique(labels):
             if cls == 0:
                 continue
             idx = np.flatnonzero(labels.ravel() == cls)
+            keep_idx = idx[forced[idx]] if forced is not None else idx[:0]   # always-included pixels (e.g. "not crack" marks)
+            idx = idx[~forced[idx]] if forced is not None else idx
             if max_per_class and idx.size > max_per_class:
                 if near is not None:
                     nb = idx[near[idx]]; nin = idx[~near[idx]]
@@ -48,6 +52,7 @@ class TrainingSet:
                                           rng.choice(nin, n_i, replace=False) if n_i else nin[:0]])
                 else:
                     idx = rng.choice(idx, max_per_class, replace=False)
+            idx = np.concatenate([idx, keep_idx])
             self.X.append(Ff[idx])
             self.y.append(np.full(idx.size, cls, dtype=np.uint8))
 
@@ -68,9 +73,11 @@ def train(ts: TrainingSet, n_estimators: int = 200, max_depth: int | None = 20,
     return rf
 
 
-def predict(rf, im_norm: np.ndarray, sigmas=DEFAULT_SIGMAS, chunk_rows: int = 128):
+def predict(rf, im_norm: np.ndarray, sigmas=DEFAULT_SIGMAS, chunk_rows: int = 128, oriented: bool | None = None):
     """Return (labels uint8 HxW, probabilities HxWxC) for one normalised slice."""
-    F = compute_features(im_norm, sigmas)
+    if oriented is None:
+        oriented = bool(getattr(rf, "oriented_features_", False))
+    F = compute_features(im_norm, sigmas, oriented=oriented)
     H, W, n = F.shape
     classes = rf.classes_
     proba = np.empty((H, W, len(classes)), dtype=np.float32)
@@ -81,11 +88,14 @@ def predict(rf, im_norm: np.ndarray, sigmas=DEFAULT_SIGMAS, chunk_rows: int = 12
     return labels, proba
 
 
-def save_model(rf, path: str | Path, sigmas=DEFAULT_SIGMAS, norm: dict | None = None) -> None:
-    joblib.dump({"rf": rf, "sigmas": tuple(sigmas), "feature_names": feature_names(sigmas),
-                 "norm": norm or {}}, path, compress=3)
+def save_model(rf, path: str | Path, sigmas=DEFAULT_SIGMAS, norm: dict | None = None, oriented: bool = False) -> None:
+    rf.oriented_features_ = oriented
+    joblib.dump({"rf": rf, "sigmas": tuple(sigmas), "feature_names": feature_names(sigmas, oriented),
+                 "norm": norm or {}, "oriented": oriented}, path, compress=3)
 
 
 def load_model(path: str | Path):
     d = joblib.load(path)
-    return d["rf"], d["sigmas"], d.get("norm", {})
+    rf = d["rf"]
+    rf.oriented_features_ = bool(d.get("oriented", False))
+    return rf, d["sigmas"], d.get("norm", {})

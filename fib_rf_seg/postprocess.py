@@ -112,6 +112,53 @@ def trim_pores(lab: np.ndarray, im_norm: np.ndarray, level: float, band: int = 3
     return out
 
 
+def _nearest_relabel(lab: np.ndarray, drop: np.ndarray) -> np.ndarray:
+    """Give the pixels in ``drop`` the label of the nearest pixel that is neither a crack nor dropped."""
+    out = lab.copy()
+    if not drop.any():
+        return out
+    src = (lab != 4) & ~drop
+    _, (ir, ic) = ndi.distance_transform_edt(~src, return_indices=True)
+    out[drop] = lab[ir[drop], ic[drop]]
+    return out
+
+
+def filter_cracks(lab: np.ndarray, min_length: float = 0.0, min_aspect: float = 0.0) -> np.ndarray:
+    """Drop crack components that are not line-like: shorter than ``min_length`` px along
+    their major axis, or with a major/minor axis ratio below ``min_aspect`` (dots and blobs
+    left by curtaining and noise).  Dropped pixels take the nearest surrounding phase."""
+    from skimage.measure import label, regionprops
+    if min_length <= 0 and min_aspect <= 0:
+        return lab
+    cc = label(lab == 4, connectivity=2)
+    drop = np.zeros(lab.shape, dtype=bool)
+    for r in regionprops(cc):
+        aspect = r.axis_major_length / max(r.axis_minor_length, 1.0)
+        if r.axis_major_length < min_length or aspect < min_aspect:
+            drop |= cc == r.label
+    return _nearest_relabel(lab, drop)
+
+
+def drop_vertical_cracks(lab: np.ndarray, max_angle_deg: float = 25.0, min_len: int = 6,
+                         replace: int | None = None) -> np.ndarray:
+    """Relabel crack components whose major axis lies within ``max_angle_deg`` of the
+    column (vertical) axis: FIB curtaining leaves vertical dark streaks, whereas cracks
+    in these cathodes run along the lamellae.  They take the label ``replace``, or, when
+    that is None, the nearest non-crack label (so streaks in LLZTO become LLZTO)."""
+    from skimage.measure import label, regionprops
+    out = lab.copy()
+    cc = label(lab == 4, connectivity=2)
+    drop = np.zeros(lab.shape, dtype=bool)
+    for r in regionprops(cc):
+        if r.axis_major_length >= min_len and abs(np.degrees(r.orientation)) < max_angle_deg:
+            drop |= cc == r.label
+    if replace is not None:
+        out[drop] = replace
+        return out
+    return _nearest_relabel(lab, drop)
+
+
 def phase_fractions(lab: np.ndarray) -> dict[int, float]:
+    from . import PHASES
     n = lab.size
-    return {int(c): float((lab == c).sum()) / n for c in (1, 2, 3)}
+    return {int(c): float((lab == c).sum()) / n for c in PHASES}
