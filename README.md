@@ -349,3 +349,11 @@ edges at the multi-Otsu level (29 %); v4 = v3 retrained on four slices with
 fixed grey bounds.  Only `rf_lco60.joblib` is committed; the train command
 above (with `--trees 100 --max-depth 14` for the compact one) reproduces the
 models deterministically (`random_state=0`).
+
+## Preprocessing (BSE/SE merge, FFT curtaining removal)
+
+Jehad's preprocessing scripts live in `preprocessing/` (`merge_bse_se.py`, `remove_curtaining.py`,
+`select_fft_filter.py`, hand-picked `fft_mask.npy` for 1001×1001 px slices).
+`scripts/preprocess_lco50_cycled.sh` runs them on the LCO50 cycled BSE stack on the Mac
+(`ds_1_BSE` → `ds_1_BSE_clean`); pass a registered SE folder as 2nd argument to blend first.
+Example before/after: `docs/overlays/preprocess_lco50_cycled_slice001.png`.
