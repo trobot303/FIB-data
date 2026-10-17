@@ -40,10 +40,18 @@ def _norm_args(p):
     p.add_argument("--crop", type=int, nargs=4, metavar=("Y0", "Y1", "X0", "X1"), default=None,
                    help="crop every slice to rows Y0:Y1 and columns X0:X1 before processing (pixel indices, end exclusive)")
     p.add_argument("--destripe", action="store_true", help="remove vertical curtaining stripes before normalisation")
+    p.add_argument("--rescale", type=float, default=1.0, help="resample the slice by this factor before processing (e.g. 0.5 for data with a 2x finer pixel than the training set); labels are written at the original size")
 
 
-def _load_norm(path, lo, hi, smooth=None, norm="bounds", box=None, strip=False):
-    im = crop(read_slice(path), box)
+def _rescale(im, f):
+    if f == 1.0:
+        return im
+    from scipy import ndimage as ndi
+    return ndi.zoom(im, f, order=1)
+
+
+def _load_norm(path, lo, hi, smooth=None, norm="bounds", box=None, strip=False, rescale=1.0):
+    im = _rescale(crop(read_slice(path), box), rescale)
     if smooth:
         from scipy import ndimage as ndi
         im = ndi.gaussian_filter(im, smooth)
@@ -206,9 +214,13 @@ def cmd_predict(a):
     t_start = time.time()
     for i, f in enumerate(files, 1):
         if a.overwrite or not (out / ldir / f"{f.stem}_labels.tif").exists():
-            im = _load_norm(f, lo, hi, smooth, mode, box, strip)
+            im = _load_norm(f, lo, hi, smooth, mode, box, strip, a.rescale)
             lab, proba = predict(rf, im, sigmas)
             lab = _postprocess(lab, im, a)
+            if a.rescale != 1.0:                       # back to the original pixel grid
+                from scipy import ndimage as ndi
+                orig = crop(read_slice(f), box).shape
+                lab = ndi.zoom(lab, (orig[0] / lab.shape[0], orig[1] / lab.shape[1]), order=0).astype(np.uint8)
             write_labels(out / ldir / f"{f.stem}_labels.tif", lab)
             if a.save_proba:
                 np.save(out / f"{f.stem}_proba.npy", proba)
@@ -248,7 +260,7 @@ def cmd_review(a):
     smooth = a.smooth if a.smooth is not None else norm.get("smooth")
     mode = a.norm or norm.get("norm", "bounds")
     strip = a.destripe or bool(norm.get("destripe", False))
-    im = _load_norm(a.image, lo, hi, smooth, mode, tuple(a.crop) if a.crop else None, strip)
+    im = _load_norm(a.image, lo, hi, smooth, mode, tuple(a.crop) if a.crop else None, strip, a.rescale)
     lab, proba = predict(rf, im, sigmas)
     lab = _postprocess(lab, im, a)
     scr = load_scribbles(a.scribbles, im.shape) if a.scribbles else None
