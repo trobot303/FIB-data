@@ -26,7 +26,7 @@ from . import PHASES
 from .io import crop, destripe, list_slices, normalise, normalise_phases, read_labels, read_slice, write_labels
 from .features import DEFAULT_SIGMAS
 from .model import TrainingSet, load_model, predict, save_model, train
-from .postprocess import clean_labels, drop_vertical_cracks, phase_fractions, place_solid_edges, pore_level_auto, snap_to_edges, solid_level_auto, trim_pores
+from .postprocess import clean_labels, drop_vertical_cracks, filter_cracks, phase_fractions, place_solid_edges, pore_level_auto, snap_to_edges, solid_level_auto, trim_pores
 from .scribbles import auto_seeds, curtaining_negatives, densify, load_scribbles, merge_labels
 from .viz import review_figure
 
@@ -183,6 +183,8 @@ def _postprocess(lab, im, a):
         lab = clean_labels(lab, min_size=a.min_size, majority_radius=a.majority)
     if a.drop_vertical is not None and a.drop_vertical > 0:
         lab = drop_vertical_cracks(lab, max_angle_deg=a.drop_vertical)
+    if a.crack_min_length > 0 or a.crack_min_aspect > 0:
+        lab = filter_cracks(lab, min_length=a.crack_min_length, min_aspect=a.crack_min_aspect)
     return lab
 
 
@@ -315,6 +317,8 @@ def main(argv=None):
     pr.add_argument("--solid-level", default=None, help="re-place LCO/LLZTO edges at this grey level (0-1) or 'auto' (multi-Otsu)")
     pr.add_argument("--band", type=int, default=3)
     pr.add_argument("--drop-vertical", type=float, default=None, metavar="DEG", help="relabel crack components within DEG of vertical as LCO (FIB curtaining streaks)")
+    pr.add_argument("--crack-min-length", type=float, default=0.0, metavar="PX", help="drop crack components shorter than PX along their major axis (dots left by curtaining/noise)")
+    pr.add_argument("--crack-min-aspect", type=float, default=0.0, metavar="RATIO", help="drop crack components whose major/minor axis ratio is below RATIO (blobs); e.g. 3")
     pr.add_argument("--snap", type=int, default=-1, metavar="ERODE", help="snap boundaries to grey edges by watershed (erode radius for markers, e.g. 2; -1 = off)")
     pr.add_argument("--per-phase", action="store_true", help="also write one binary mask per phase and slice into <out>/pore, <out>/LCO, <out>/LLZTO")
     pr.add_argument("--stack", action="store_true", help="also write one multipage TIFF per phase (and labels_stack.tif) for the whole stack")
@@ -338,6 +342,8 @@ def main(argv=None):
     r.add_argument("--solid-level", default=None, help="re-place LCO/LLZTO edges at this grey level (0-1) or 'auto' (multi-Otsu)")
     r.add_argument("--band", type=int, default=3)
     r.add_argument("--drop-vertical", type=float, default=None, metavar="DEG", help="relabel crack components within DEG of vertical as LCO (FIB curtaining streaks)")
+    r.add_argument("--crack-min-length", type=float, default=0.0, metavar="PX")
+    r.add_argument("--crack-min-aspect", type=float, default=0.0, metavar="RATIO")
     r.add_argument("--snap", type=int, default=-1, metavar="ERODE", help="snap boundaries to grey edges by watershed (erode radius for markers, e.g. 2; -1 = off)")
     _norm_args(r)
     r.set_defaults(func=cmd_review)

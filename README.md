@@ -357,3 +357,7 @@ Jehad's preprocessing scripts live in `preprocessing/` (`merge_bse_se.py`, `remo
 `scripts/preprocess_lco50_cycled.sh` runs them on the LCO50 cycled BSE stack on the Mac
 (`ds_1_BSE` → `ds_1_BSE_clean`); pass a registered SE folder as 2nd argument to blend first.
 Example before/after: `docs/overlays/preprocess_lco50_cycled_slice001.png`.
+
+Crack post-processing options of `predict`/`review`: `--drop-vertical DEG` (vertical streaks → surrounding
+phase), `--crack-min-length PX` and `--crack-min-aspect RATIO` (drop dot-like crack components; e.g. 12 and 3
+for the heavily curtained LCO50 cycled data, `scripts/segment_lco50_cycled.sh`).
