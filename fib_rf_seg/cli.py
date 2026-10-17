@@ -97,11 +97,13 @@ def apply_edge_levels(lab, im_norm, pore_level=None, solid_level=None, band=3, v
 def build_training_labels(im_norm, scribble_path=None, label_path=None, auto=False,
                           auto_erode=3, auto_margin=0.35, dense=False, drop_boundary=1,
                           pore_level=None, band=3, solid_level=None, crack_width=0, crack_contrast=0.35,
-                          curtain_neg=False):
+                          curtain_neg=False, crack_llzto=0.0):
     parts = []
     if auto:
         seeds, (t1, t2) = auto_seeds(im_norm, erode=auto_erode, margin=auto_margin,
-                                     crack_width=crack_width, crack_contrast=crack_contrast)
+                                     crack_width=crack_width, crack_contrast=crack_contrast,
+                                     crack_llzto=crack_llzto,
+                                     crack_exclude_vertical=20.0 if curtain_neg else 0.0)
         print(f"  auto seeds: thresholds {t1:.3f}/{t2:.3f}; "
               + ", ".join(f"{PHASES[k]}={int((seeds == k).sum())}" for k in PHASES))
         parts.append(seeds)
@@ -113,7 +115,7 @@ def build_training_labels(im_norm, scribble_path=None, label_path=None, auto=Fal
         sys.exit("no training labels given (use --auto-seeds, --scribbles or --labels)")
     lab = merge_labels(*parts)
     if curtain_neg:
-        cn = curtaining_negatives(im_norm)
+        cn = curtaining_negatives(im_norm, llzto=crack_llzto > 0)
         cn &= lab != 4
         lab[cn] = 5
         print(f"  curtaining negatives: {int(cn.sum())} px")
@@ -158,7 +160,7 @@ def cmd_train(a):
         im = _load_norm(img, a.lo, a.hi, a.smooth, a.norm or "bounds", a.crop, a.destripe)
         lab, force = build_training_labels(im, s, l, a.auto_seeds, a.auto_erode, a.auto_margin, a.dense, a.drop_boundary,
                                            a.pore_level, a.band, a.solid_level, a.crack_width, a.crack_contrast,
-                                           a.curtaining_negatives)
+                                           a.curtaining_negatives, a.crack_llzto)
         print("  labels used: " + ", ".join(f"{PHASES[k]}={int((lab == k).sum())}" for k in PHASES))
         ts.add(im, lab, sigmas=sigmas, max_per_class=a.max_per_class, boundary_frac=a.boundary_frac, force=force,
                oriented=a.oriented)
@@ -284,6 +286,7 @@ def main(argv=None):
     t.add_argument("--auto-margin", type=float, default=0.35)
     t.add_argument("--crack-width", type=int, default=0, help="add automatic crack seeds (class 4): max half-width in px of a dark line counted as crack; 0 = off")
     t.add_argument("--crack-contrast", type=float, default=0.35, help="crack seed depth as a fraction of the LCO-pore grey difference")
+    t.add_argument("--crack-llzto", type=float, default=0.0, metavar="CONTRAST", help="also allow cracks inside LLZTO: automatic crack seeds at CONTRAST x (LLZTO-LCO grey difference) (e.g. 0.15), curtaining negatives inside LLZTO too; 0 = cracks only in LCO")
     t.add_argument("--curtaining-negatives", action="store_true", help="label vertical dark ridges (FIB curtaining) automatically as 'not crack'")
     t.add_argument("--oriented", action="store_true", help="add orientation-sensitive features (row/column Hessian and gradients) so vertical curtaining and inclined cracks can be told apart")
     t.add_argument("--dense", action="store_true", help="propagate seeds/scribbles to all pixels with a watershed before sampling")

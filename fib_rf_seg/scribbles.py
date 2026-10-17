@@ -55,30 +55,48 @@ def load_scribbles(path: str | Path, shape: tuple[int, int]) -> np.ndarray:
 
 
 def crack_candidates(im_norm: np.ndarray, width: int = 3, contrast: float = 0.35, smooth: float = 1.0,
-                     min_len: int = 12) -> np.ndarray:
+                     min_len: int = 12, llzto_contrast: float = 0.0, exclude_vertical_deg: float = 0.0) -> np.ndarray:
     """Thin dark lines: a black top-hat (closing with a disk of radius ``width`` minus the image)
     above ``contrast`` x (LCO - pore grey difference), excluding dark regions wider than
-    2*width (those survive an opening and are pores) and components shorter than ``min_len`` px."""
+    2*width (those survive an opening and are pores) and components shorter than ``min_len`` px.
+
+    With ``llzto_contrast`` > 0, dark lines inside LLZTO are candidates too, thresholded at
+    ``llzto_contrast`` x (LLZTO - LCO grey difference); otherwise LLZTO is excluded.  With
+    ``exclude_vertical_deg`` > 0, components whose major axis lies within that angle of the
+    column axis (FIB curtaining streaks) are dropped."""
+    from skimage.measure import label, regionprops
     from skimage.morphology import closing, opening, remove_small_objects
     g = ndi.gaussian_filter(im_norm, smooth) if smooth > 0 else im_norm
     t1, t2 = threshold_multiotsu(g, classes=3)
     lo, mid = float(np.median(g[g < t1])), float(np.median(g[(g >= t1) & (g < t2)]))
+    hi = float(np.median(g[g >= t2]))
     tophat = closing(g, sk_disk(width)) - g
     cand = tophat > contrast * (mid - lo)
     thick = opening(g < t1, sk_disk(width))
     cand &= ~ndi.binary_dilation(thick, iterations=2)
-    cand &= g < t2                                  # never inside LLZTO
-    return remove_small_objects(cand, max_size=min_len - 1, connectivity=2) if min_len > 1 else cand
+    cand &= g < t2                                  # LCO / pore part
+    if llzto_contrast > 0:
+        llz = ndi.binary_erosion(g >= t2, iterations=2)   # not the LLZTO rim (grain edges are dark too)
+        cand |= (tophat > llzto_contrast * (hi - mid)) & llz
+    if min_len > 1:
+        cand = remove_small_objects(cand, max_size=min_len - 1, connectivity=2)
+    if exclude_vertical_deg > 0:
+        cc = label(cand, connectivity=2)
+        drop = [r.label for r in regionprops(cc)
+                if abs(np.degrees(r.orientation)) < exclude_vertical_deg and r.axis_major_length >= 8]
+        if drop:
+            cand &= ~np.isin(cc, drop)
+    return cand
 
 
 def curtaining_negatives(im_norm: np.ndarray, sigma: float = 1.2, angle_deg: float = 20.0, min_len: int = 6,
-                         quantile: float = 95.0) -> np.ndarray:
+                         quantile: float = 95.0, llzto: bool = False) -> np.ndarray:
     """Vertical dark ridges (FIB curtaining) to be used as 'not crack' examples.
 
     A dark line gives a positive Hessian eigenvalue across it; the ridge is
     counted as vertical when its normal is within ``angle_deg`` of the column
     axis.  Only ridges above the ``quantile`` of the response and longer than
-    ``min_len`` px are kept; LLZTO (bright) is excluded.
+    ``min_len`` px are kept; LLZTO (bright) is excluded unless ``llzto`` is set.
     """
     from skimage.feature import hessian_matrix, hessian_matrix_eigvals
     from skimage.morphology import remove_small_objects
@@ -91,13 +109,16 @@ def curtaining_negatives(im_norm: np.ndarray, sigma: float = 1.2, angle_deg: flo
     # normal along the column axis means the line is vertical
     g = ndi.gaussian_filter(im_norm, 1.0)
     t1, t2 = threshold_multiotsu(g, classes=3)
-    cand = (ev > np.percentile(ev, quantile)) & vertical & (g < t2) & (Hcc > 2 * np.abs(Hrr))
+    cand = (ev > np.percentile(ev, quantile)) & vertical & (Hcc > 2 * np.abs(Hrr))
+    if not llzto:
+        cand &= g < t2
     return remove_small_objects(cand, max_size=min_len - 1, connectivity=2)
 
 
 def auto_seeds(im_norm: np.ndarray, erode: int = 3, margin: float = 0.35,
                smooth: float = 1.0, keep_small: int = 200, crack_width: int = 0,
-               crack_contrast: float = 0.35) -> tuple[np.ndarray, tuple[float, float]]:
+               crack_contrast: float = 0.35, crack_llzto: float = 0.0,
+               crack_exclude_vertical: float = 0.0) -> tuple[np.ndarray, tuple[float, float]]:
     """High-confidence seed labels from multi-Otsu thresholds.
 
     A pixel is a seed only if its smoothed grey value is at least ``margin`` of
@@ -129,9 +150,13 @@ def auto_seeds(im_norm: np.ndarray, erode: int = 3, margin: float = 0.35,
             m = eroded
         seeds[m] = k
     if crack_width > 0:
-        cr = crack_candidates(im_norm, width=crack_width, contrast=crack_contrast, smooth=smooth)
-        seeds[cr] = 4                              # cracks override pore/LCO seeds
-        seeds[ndi.binary_dilation(cr, iterations=2) & ~cr & (seeds != 3)] = 0   # unlabel the fuzzy rim
+        cr = crack_candidates(im_norm, width=crack_width, contrast=crack_contrast, smooth=smooth,
+                              llzto_contrast=crack_llzto, exclude_vertical_deg=crack_exclude_vertical)
+        seeds[cr] = 4                              # cracks override phase seeds
+        rim = ndi.binary_dilation(cr, iterations=2) & ~cr
+        if crack_llzto <= 0:
+            rim &= seeds != 3
+        seeds[rim] = 0                             # unlabel the fuzzy rim
     return seeds, (float(t1), float(t2))
 
 

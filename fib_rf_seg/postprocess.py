@@ -112,16 +112,27 @@ def trim_pores(lab: np.ndarray, im_norm: np.ndarray, level: float, band: int = 3
     return out
 
 
-def drop_vertical_cracks(lab: np.ndarray, max_angle_deg: float = 25.0, min_len: int = 6, replace: int = 2) -> np.ndarray:
+def drop_vertical_cracks(lab: np.ndarray, max_angle_deg: float = 25.0, min_len: int = 6,
+                         replace: int | None = None) -> np.ndarray:
     """Relabel crack components whose major axis lies within ``max_angle_deg`` of the
-    column (vertical) axis as ``replace`` (LCO): FIB curtaining leaves vertical dark
-    streaks, whereas cracks in these cathodes run along the lamellae."""
+    column (vertical) axis: FIB curtaining leaves vertical dark streaks, whereas cracks
+    in these cathodes run along the lamellae.  They take the label ``replace``, or, when
+    that is None, the nearest non-crack label (so streaks in LLZTO become LLZTO)."""
     from skimage.measure import label, regionprops
     out = lab.copy()
     cc = label(lab == 4, connectivity=2)
+    drop = np.zeros(lab.shape, dtype=bool)
     for r in regionprops(cc):
         if r.axis_major_length >= min_len and abs(np.degrees(r.orientation)) < max_angle_deg:
-            out[cc == r.label] = replace
+            drop |= cc == r.label
+    if not drop.any():
+        return out
+    if replace is not None:
+        out[drop] = replace
+    else:
+        src = lab != 4
+        _, (ir, ic) = ndi.distance_transform_edt(~src, return_indices=True)
+        out[drop] = lab[ir[drop], ic[drop]]
     return out
 
 
