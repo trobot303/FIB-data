@@ -260,7 +260,8 @@ def cmd_predict(a):
     if stacks is not None:
         tifffile.imwrite(str(out / stack_name), np.stack(stacks[0]), compression="zlib", photometric="minisblack")
         for k in PHASES:
-            tifffile.imwrite(str(out / f"{PHASES[k]}_stack.tif"), np.stack(stacks[k]), compression="zlib", photometric="minisblack")
+            ph_name = f"{PHASES[k]}_stack.tif" if ldir == "labels" else f"{PHASES[k]}_{ldir}_stack.tif"
+            tifffile.imwrite(str(out / ph_name), np.stack(stacks[k]), compression="zlib", photometric="minisblack")
         print(f"[predict] wrote {stack_name} and one multipage stack per phase to {out}")
     mean = {PHASES[k]: float(np.mean([fr[k] for fr in summary.values()])) for k in PHASES}
     print("[predict] mean fractions over stack: " + ", ".join(f"{n}={v:.3f}" for n, v in mean.items()))

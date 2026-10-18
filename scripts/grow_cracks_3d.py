@@ -59,6 +59,7 @@ def main():
     ap.add_argument("--connectivity", type=int, choices=(6, 18, 26), default=26)
     ap.add_argument("--z-blocks", type=int, default=0, help="process the stack in N overlapping blocks (0 = whole stack)")
     ap.add_argument("--no-stacks", action="store_true", help="write only the per-slice labels")
+    ap.add_argument("--tag", default="3d", help="name tag of the outputs next to <out>: labels_<tag>_stack.tif, <phase>_<tag>_stack.tif, fractions_<tag>.csv")
     a = ap.parse_args()
 
     lab_dir, pr_dir, out = Path(a.labels), Path(a.proba), Path(a.out)
@@ -95,7 +96,7 @@ def main():
     after = int((lab == 4).sum())
     print(f"crack voxels: {before} -> {after} (+{100 * (after - before) / max(before, 1):.0f} %)")
 
-    with open(out.parent / "fractions_3d.csv", "w", newline="") as fh:
+    with open(out.parent / f"fractions_{a.tag}.csv", "w", newline="") as fh:
         w = csv.writer(fh); w.writerow(["slice"] + list(PHASES.values()))
         for i, s in enumerate(stems):
             tifffile.imwrite(str(out / f"{s}_labels.tif"), lab[i])
@@ -104,9 +105,9 @@ def main():
     print("mean fractions: " + ", ".join(f"{PHASES[k]}={(lab == k).mean():.3f}" for k in PHASES))
     if not a.no_stacks:
         big = lab.nbytes > 3.5e9
-        tifffile.imwrite(str(out.parent / "labels_3d_stack.tif"), lab, photometric="minisblack", bigtiff=big)
+        tifffile.imwrite(str(out.parent / f"labels_{a.tag}_stack.tif"), lab, photometric="minisblack", bigtiff=big)
         for k, name in PHASES.items():
-            tifffile.imwrite(str(out.parent / f"{name}_3d_stack.tif"), ((lab == k) * 255).astype(np.uint8), photometric="minisblack", bigtiff=big)
+            tifffile.imwrite(str(out.parent / f"{name}_{a.tag}_stack.tif"), ((lab == k) * 255).astype(np.uint8), photometric="minisblack", bigtiff=big)
         print(f"stacks written to {out.parent}")
     print(f"done: {out}")
 

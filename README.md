@@ -385,3 +385,10 @@ along their length and propagate through neighbouring slices, while isolated low
 `fractions_3d.csv`. `scripts/segment_lco50_cycled.sh` runs it (LOW=0.15 for more growth) and writes
 both overlay stacks (`overlay/overlay_stack.tif` per-slice, `overlay_3d/overlay_stack.tif` grown).
 Example: `docs/overlays/LCO50_cycled_crack_growth.png`.
+
+**Common post-processing for the cycled samples (reviewer point).** LCO70 cycled was first segmented with
+island removal only (labels_v2); LCO50 cycled with the crack shape filter and 3D growth. Both LCO70 scripts
+(`scripts/segment_lco70_cycled.sh`, `scripts/segment_aligned_blocks.sh`, output `labels_v3` / `labels_v3_3d`)
+now use the same chain as LCO50: `--min-size 6 --crack-min-length 12 --crack-min-aspect 3`, no
+`--drop-vertical`, then `grow_cracks_3d.py --low 0.2`. Per-phase stacks written with a label subfolder
+other than `labels` are named `<phase>_<subfolder>_stack.tif`.
