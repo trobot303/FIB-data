@@ -11,13 +11,17 @@
 # line-like (dots/blobs from curtaining and noise); remove them if short cracks are expected.
 # Output: <OUT>/labels/<slice>_labels.tif (1 pore, 2 LCO, 3 LLZTO, 4 crack), <OUT>/labels_stack.tif,
 #         <OUT>/<phase>/ and <OUT>/<phase>_stack.tif binary masks (255 = phase), fractions csv/json.
-# The run resumes if interrupted (existing label files are skipped).
+# Existing label files in OUT are recomputed (so a change of model takes effect); set RESUME=1 to skip
+# slices already done, e.g. after an interrupted run.  MODEL=models/rf_cracks_lco50_v1.joblib selects
+# the earlier model (trained on slices 262/272 only).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 IN="${1:-/Users/jehad/Desktop/work/paper 2/LCO50_cycled/ds_1_BSE_clean}"
 OUT="${2:-/Users/jehad/Desktop/work/paper 2/LCO50_cycled/ds_1_BSE_clean_segmented}"
+OW="--overwrite"; [ "${RESUME:-0}" = "1" ] && OW=""
+echo "== model: ${MODEL:-models/rf_cracks_lco50_v2.joblib}"
 python -m fib_rf_seg predict --model "${MODEL:-models/rf_cracks_lco50_v2.joblib}" --input "$IN" --out "$OUT" \
-    --min-size 6 --crack-min-length 12 --crack-min-aspect 3 --per-phase --stack
+    --min-size 6 --crack-min-length 12 --crack-min-aspect 3 --per-phase --stack $OW
 echo "== overlays (every 50th slice) -> $OUT/overlays"
 python scripts/make_overlays.py "$OUT" --raw "$IN" --labels labels --out "$OUT/overlays" --phases crack --every 50 --voxel-um 0.02
 echo "== RGB overlay stack (cracks in red on the SEM slices) -> $OUT/overlay"
