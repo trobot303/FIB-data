@@ -367,7 +367,7 @@ colours all phases, `--scale-bar` adds a bar. `scripts/segment_lco50_cycled.sh` 
 
 ### LCO50 cycled crack model
 
-`models/rf_cracks_lco50_v1.joblib`: trained on the FFT-cleaned LCO50 cycled slices 262 and 272
+`models/rf_cracks_lco50_v2.joblib` (v1: slices 262/272 only): trained on the FFT-cleaned LCO50 cycled slices 045, 053, 262 and 272
 (`data/LCO50_cycled/`, red crack annotations converted with `annotation_to_scribbles` to
 `data/labels/LCO50_cycled_slice-2xx_cracks_user.json`) together with the three annotated LCO70 cycled
 slices, same recipe as rf_cracks_v5 (`--auto-seeds --dense --pore-level auto --norm phase --smooth 0.7
