@@ -361,3 +361,6 @@ Example before/after: `docs/overlays/preprocess_lco50_cycled_slice001.png`.
 Crack post-processing options of `predict`/`review`: `--drop-vertical DEG` (vertical streaks → surrounding
 phase), `--crack-min-length PX` and `--crack-min-aspect RATIO` (drop dot-like crack components; e.g. 12 and 3
 for the heavily curtained LCO50 cycled data, `scripts/segment_lco50_cycled.sh`).
+`scripts/overlay_stack.py --raw <slices> --labels <labels> --out <folder>` writes an RGB overlay stack
+(`overlay_stack.tif`, one page per slice, cracks in red) plus per-slice overlay TIFFs; `--phases all`
+colours all phases, `--scale-bar` adds a bar. `scripts/segment_lco50_cycled.sh` runs it at the end.

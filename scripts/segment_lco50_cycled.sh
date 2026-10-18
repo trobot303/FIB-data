@@ -20,3 +20,5 @@ python -m fib_rf_seg predict --model models/rf_cracks_v5.joblib --input "$IN" --
     --min-size 6 --drop-vertical 20 --crack-min-length 12 --crack-min-aspect 3 --per-phase --stack
 echo "== overlays (every 50th slice) -> $OUT/overlays"
 python scripts/make_overlays.py "$OUT" --raw "$IN" --labels labels --out "$OUT/overlays" --phases crack --every 50 --voxel-um 0.02
+echo "== RGB overlay stack (cracks in red on the SEM slices) -> $OUT/overlay"
+python scripts/overlay_stack.py --raw "$IN" --labels "$OUT/labels" --out "$OUT/overlay"
