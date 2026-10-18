@@ -364,3 +364,14 @@ for the heavily curtained LCO50 cycled data, `scripts/segment_lco50_cycled.sh`).
 `scripts/overlay_stack.py --raw <slices> --labels <labels> --out <folder>` writes an RGB overlay stack
 (`overlay_stack.tif`, one page per slice, cracks in red) plus per-slice overlay TIFFs; `--phases all`
 colours all phases, `--scale-bar` adds a bar. `scripts/segment_lco50_cycled.sh` runs it at the end.
+
+### LCO50 cycled crack model
+
+`models/rf_cracks_lco50_v1.joblib`: trained on the FFT-cleaned LCO50 cycled slices 262 and 272
+(`data/LCO50_cycled/`, red crack annotations converted with `annotation_to_scribbles` to
+`data/labels/LCO50_cycled_slice-2xx_cracks_user.json`) together with the three annotated LCO70 cycled
+slices, same recipe as rf_cracks_v5 (`--auto-seeds --dense --pore-level auto --norm phase --smooth 0.7
+--destripe --class-weight 4 --max-per-class 20000 --trees 200 --max-depth 16 --oriented
+--curtaining-negatives`). Used by `scripts/segment_lco50_cycled.sh` without `--drop-vertical` (the
+sample has near-vertical cracks) and with the dot filter `--crack-min-length 12 --crack-min-aspect 3`.
+Comparison with rf_cracks_v5: `docs/overlays/LCO50_cycled_model_comparison.png`.
