@@ -228,6 +228,15 @@ def cmd_predict(a):
             write_labels(out / ldir / f"{f.stem}_labels.tif", lab)
             if a.save_proba:
                 np.save(out / f"{f.stem}_proba.npy", proba)
+            if a.crack_proba:
+                ci = list(rf.classes_).index(4) if 4 in rf.classes_ else None
+                if ci is not None:
+                    pc = proba[..., ci]
+                    if a.rescale != 1.0:
+                        from scipy import ndimage as ndi
+                        pc = ndi.zoom(pc, (lab.shape[0] / pc.shape[0], lab.shape[1] / pc.shape[1]), order=1)
+                    (out / "crack_proba").mkdir(exist_ok=True)
+                    tifffile.imwrite(str(out / "crack_proba" / f"{f.stem}_crackp.tif"), np.clip(pc * 255, 0, 255).astype(np.uint8))
         else:
             lab = read_labels(out / ldir / f"{f.stem}_labels.tif")
         for k, d in phase_dirs.items():
@@ -327,6 +336,7 @@ def main(argv=None):
     pr.add_argument("--labels-subdir", default="labels", help="name of the per-slice label folder inside <out> (e.g. labels_v2)")
     pr.add_argument("--stack-name", default=None, help="file name of the label stack (default: <labels-subdir>_stack.tif)")
     pr.add_argument("--save-proba", action="store_true")
+    pr.add_argument("--crack-proba", action="store_true", help="write the crack probability of each slice as uint8 (x255) to <out>/crack_proba/<stem>_crackp.tif, for scripts/grow_cracks_3d.py")
     _norm_args(pr)
     pr.set_defaults(func=cmd_predict)
 

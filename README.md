@@ -375,3 +375,13 @@ slices, same recipe as rf_cracks_v5 (`--auto-seeds --dense --pore-level auto --n
 --curtaining-negatives`). Used by `scripts/segment_lco50_cycled.sh` without `--drop-vertical` (the
 sample has near-vertical cracks) and with the dot filter `--crack-min-length 12 --crack-min-aspect 3`.
 Comparison with rf_cracks_v5: `docs/overlays/LCO50_cycled_model_comparison.png`.
+
+**Crack growth in 3D** (`scripts/grow_cracks_3d.py`): the per-pixel classifier finds a crack only on
+its clearest parts and may miss it in the next slice. `predict --crack-proba` writes the crack
+probability per slice (`crack_proba/<stem>_crackp.tif`, uint8); the growth script then adds every voxel
+with probability > `--low` (0.2) that is 26-connected in 3D to a detected crack, so cracks are completed
+along their length and propagate through neighbouring slices, while isolated low-probability pixels
+(curtaining) are not added. Output `labels_3d/`, `labels_3d_stack.tif`, `<phase>_3d_stack.tif`,
+`fractions_3d.csv`. `scripts/segment_lco50_cycled.sh` runs it (LOW=0.15 for more growth) and writes
+both overlay stacks (`overlay/overlay_stack.tif` per-slice, `overlay_3d/overlay_stack.tif` grown).
+Example: `docs/overlays/LCO50_cycled_crack_growth.png`.
