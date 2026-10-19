@@ -10,14 +10,15 @@
 #      (TORTUOSITY=1, scripts/tortuosity_y.py, needs taufactor + torch; DOWNSAMPLE=2 by default)
 #   cd ~/Documents/FIB-data && conda activate fibseg
 #   bash scripts/analyse_lco50_cycled.sh [INPUT_DIR] [OUTPUT_DIR]
-# Variables: VOXEL="x y z" voxel size in um (default "0.02 0.02 0.05": 20 nm pixels, 50 nm slices - adjust!),
+# Variables: VOXEL="x y z" voxel size in um (default "0.02 0.02 0.02": A970_5050_cycled try3 Dataset 1 has
+#            20 nm pixels and 20 nm slices, every slice imaged - see dataset_info_5050.hdr),
 #            COLLECTOR=top|bottom (image edge of the current collector, default top), SIZE (render edge in
 #            voxels, 0 = whole stack), SKIP_SEG=1 to reuse an existing segmentation, TORTUOSITY=1, DOWNSAMPLE.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 IN="${1:-/Users/jehad/Desktop/work/paper 2/LCO50_cycled/ds_1_BSE_clean}"
 OUT="${2:-/Users/jehad/Desktop/work/paper 2/LCO50_cycled/ds_1_BSE_clean_segmented}"
-VOXEL="${VOXEL:-0.02 0.02 0.05}"
+VOXEL="${VOXEL:-0.02 0.02 0.02}"
 COLLECTOR="${COLLECTOR:-top}"
 if [ "${SKIP_SEG:-0}" != "1" ]; then
     bash scripts/segment_lco50_cycled.sh "$IN" "$OUT"

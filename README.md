@@ -400,4 +400,4 @@ growth + overlay stacks (`segment_lco50_cycled.sh`), y-connectivity of LCO (crac
 LLZTO (`connectivity_y.py --tag 3d`), dimetric 3D rendering (`render_cracks_3d.py --tag 3d`), optional
 y-tortuosity (`TORTUOSITY=1`). `--tag 3d` makes these scripts read the grown-crack stacks
 `<phase>_3d_stack.tif` (use `--tag v3_3d` for the LCO70 aligned blocks). Set `VOXEL="x y z"` (um) to the
-real voxel size of the dataset and `COLLECTOR=top|bottom`.
+real voxel size of the dataset (LCO50 cycled ds_1: 20 nm isotropic, default) and `COLLECTOR=top|bottom`.
