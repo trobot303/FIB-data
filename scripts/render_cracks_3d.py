@@ -17,9 +17,16 @@ import tifffile
 from scipy import ndimage as ndi
 
 
+TAG = ""
+
+
+def stack_file(name):
+    return f"{name}_{TAG}_stack.tif" if TAG else f"{name}_stack.tif"
+
+
 def load(folder, name, size, step):
     """(z, y, x) bool mask from <folder>/<name>_stack.tif; size = 0 keeps the whole stack."""
-    p = Path(folder) / f"{name}_stack.tif"
+    p = Path(folder) / stack_file(name)
     with tifffile.TiffFile(str(p)) as t:
         pages = t.series[0].shape[0]
         n = pages if size <= 0 else min(size, pages)
@@ -142,22 +149,24 @@ def main():
     ap.add_argument("--z1-col", default=None)
     ap.add_argument("--window", type=int, nargs=2, default=(1800, 1600))
     ap.add_argument("--interactive", action="store_true", help="open an interactive window instead of writing a PNG")
+    ap.add_argument("--tag", default="", help="use <phase>_<tag>_stack.tif (e.g. 3d for the grown cracks of grow_cracks_3d.py, v3_3d for the aligned blocks)")
     a = ap.parse_args()
     import pyvista as pv
 
-    global a_ytop, a_z0, a_z1
+    global a_ytop, a_z0, a_z1, TAG
     a_ytop, a_z0, a_z1 = a.y_top_col, a.z0_col, a.z1_col
+    TAG = a.tag
     v = a.voxel_um if len(a.voxel_um) == 3 else a.voxel_um * 3
     vx, vy, vz = v
     if a.blocks:
-        lco = load_blocks(a.folder, "LCO", a.lco_step, "LCO_stack.tif")
+        lco = load_blocks(a.folder, "LCO", a.lco_step, stack_file("LCO"))
     else:
         lco = load(a.folder, "LCO", a.size, a.lco_step)
     print("LCO grid", lco.shape)
     extent = (lco.shape[2] * a.lco_step * vx, lco.shape[1] * a.lco_step * vy, lco.shape[0] * a.lco_step * vz)
     lco_surf = surface(lco, (vx * a.lco_step, vy * a.lco_step, vz * a.lco_step), smooth_sigma=1.0, reduction=a.lco_decimate)
     del lco
-    crack = load_blocks(a.folder, "crack", a.crack_step, "crack_stack.tif") if a.blocks else load(a.folder, "crack", a.size, a.crack_step)
+    crack = load_blocks(a.folder, "crack", a.crack_step, stack_file("crack")) if a.blocks else load(a.folder, "crack", a.size, a.crack_step)
     if a.crack_dilate > 0:
         crack = ndi.binary_dilation(crack, iterations=a.crack_dilate)
     print("crack grid", crack.shape, f"{crack.mean()*100:.2f}% of voxels")
@@ -171,7 +180,7 @@ def main():
                 color="black", line_width=1.5)
     pl.add_mesh(lco_surf, color=(0.55, 0.6, 0.65), opacity=a.lco_opacity, smooth_shading=True, specular=0.2)
     if a.show_llzto:
-        llz = load_blocks(a.folder, "LLZTO", a.lco_step, "LLZTO_stack.tif") if a.blocks else load(a.folder, "LLZTO", a.size, a.lco_step)
+        llz = load_blocks(a.folder, "LLZTO", a.lco_step, stack_file("LLZTO")) if a.blocks else load(a.folder, "LLZTO", a.size, a.lco_step)
         pl.add_mesh(surface(llz, (vx * a.lco_step, vy * a.lco_step, vz * a.lco_step)), color=(0.95, 0.9, 0.7), opacity=0.08, smooth_shading=True)
     pl.add_mesh(crack_surf, color="red", opacity=1.0, smooth_shading=True)
     # dimetric: parallel projection, viewed from a direction where two axes are equally foreshortened

@@ -392,3 +392,12 @@ island removal only (labels_v2); LCO50 cycled with the crack shape filter and 3D
 now use the same chain as LCO50: `--min-size 6 --crack-min-length 12 --crack-min-aspect 3`, no
 `--drop-vertical`, then `grow_cracks_3d.py --low 0.2`. Per-phase stacks written with a label subfolder
 other than `labels` are named `<phase>_<subfolder>_stack.tif`.
+
+### LCO50 cycled: full analysis (`scripts/analyse_lco50_cycled.sh`)
+
+Same analysis as for LCO70 cycled, with the LCO50 model: segmentation + common post-processing + 3D crack
+growth + overlay stacks (`segment_lco50_cycled.sh`), y-connectivity of LCO (cracks as void / filled) and
+LLZTO (`connectivity_y.py --tag 3d`), dimetric 3D rendering (`render_cracks_3d.py --tag 3d`), optional
+y-tortuosity (`TORTUOSITY=1`). `--tag 3d` makes these scripts read the grown-crack stacks
+`<phase>_3d_stack.tif` (use `--tag v3_3d` for the LCO70 aligned blocks). Set `VOXEL="x y z"` (um) to the
+real voxel size of the dataset and `COLLECTOR=top|bottom`.

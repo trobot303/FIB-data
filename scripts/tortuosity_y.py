@@ -62,6 +62,7 @@ def main():
     ap.add_argument("--device", default="auto"); ap.add_argument("--max-iter", type=int, default=20000)
     ap.add_argument("--conv", type=float, default=0.02); ap.add_argument("--out", default=None)
     ap.add_argument("--z", type=int, nargs=2, default=None, metavar=("Z0", "Z1"))
+    ap.add_argument("--tag", default="", help="use <phase>_<tag>_stack.tif (e.g. 3d for the grown cracks)")
     ap.add_argument("--phases", nargs="+", default=["lco", "llzto"], choices=("lco", "llzto"), help="which phases to solve (lco = both crack cases)")
     a = ap.parse_args()
     import torch
@@ -69,8 +70,9 @@ def main():
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else ("mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available() else "cpu")
     d = Path(a.folder)
+    sfx = f"_{a.tag}_stack.tif" if a.tag else "_stack.tif"
     def load(n):
-        p = d / f"{n}_stack.tif"
+        p = d / f"{n}{sfx}"
         if not p.exists(): return None
         arr = tifffile.imread(str(p)); arr = arr[a.z[0]:a.z[1]] if a.z else arr
         return arr > 0

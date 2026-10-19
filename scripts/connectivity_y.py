@@ -46,10 +46,12 @@ def main():
     ap.add_argument("--collector", choices=("top", "bottom"), default="top", help="image edge of the current collector (y direction)")
     ap.add_argument("--out", default=None)
     ap.add_argument("--z", type=int, nargs=2, default=None, metavar=("Z0", "Z1"), help="slice range to analyse (default: all)")
+    ap.add_argument("--tag", default="", help="use <phase>_<tag>_stack.tif (e.g. 3d for the grown cracks of grow_cracks_3d.py)")
     a = ap.parse_args()
     d = Path(a.folder)
+    sfx = f"_{a.tag}_stack.tif" if a.tag else "_stack.tif"
     def load(name):
-        p = d / f"{name}_stack.tif"
+        p = d / f"{name}{sfx}"
         if not p.exists():
             return None
         arr = tifffile.imread(str(p))
