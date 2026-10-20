@@ -30,10 +30,10 @@ OW="--overwrite"; [ "${RESUME:-0}" = "1" ] && OW=""
 echo "== model: ${MODEL:-models/rf_cracks_lco50_v2.joblib}"
 python -m fib_rf_seg predict --model "${MODEL:-models/rf_cracks_lco50_v2.joblib}" --input "$IN" --out "$OUT" \
     --min-size 6 --crack-min-length 12 --crack-min-aspect 3 --per-phase --stack --crack-proba $OW
-echo "== overlays (every 50th slice) -> $OUT/overlays"
-python scripts/make_overlays.py "$OUT" --raw "$IN" --labels labels --out "$OUT/overlays" --phases crack --every 50 --voxel-um 0.02
 echo "== growing cracks along their length and through the slices (3D hysteresis, low ${LOW:-0.2}) -> $OUT/labels_3d"
 python scripts/grow_cracks_3d.py --labels "$OUT/labels" --proba "$OUT/crack_proba" --out "$OUT/labels_3d" --low "${LOW:-0.2}" --min-length "${MIN_LENGTH:-25}" --raw "$IN" $( [ "${REFINE_WIDTH:-1}" = "1" ] && echo --refine-width )
 echo "== RGB overlay stacks (cracks in red on the SEM slices) -> $OUT/overlay (per-slice model) and $OUT/overlay_3d (grown)"
 python scripts/overlay_stack.py --raw "$IN" --labels "$OUT/labels" --out "$OUT/overlay" --no-slices
 python scripts/overlay_stack.py --raw "$IN" --labels "$OUT/labels_3d" --out "$OUT/overlay_3d"
+echo "== PNG overlays of the final cracks (every 50th slice) -> $OUT/overlays_3d"
+python scripts/make_overlays.py "$OUT" --raw "$IN" --labels labels_3d --out "$OUT/overlays_3d" --phases crack --every 50 --voxel-um 0.02
