@@ -425,3 +425,7 @@ recipe as the other crack models but `--class-weight 8`. Two-fold spatial cross-
 length limit, each crack is trimmed to the pixels at least half as dark (black top-hat, disk radius 4 px) as the
 darkest crack pixel within 3 px, i.e. the full width at half depth, plus the centre line. Mean width on ds_2:
 7 px -> 2.1 px; on ds_1: 4.4 px -> ~3 px. Applied to LCO50 ds_1, ds_2 and LCO70 alike.
+
+**Crack statistics** (`scripts/crack_stats.py NAME=<segmented folder> ... [--labels labels_3d] [--z-um ...]`):
+phase fractions, host phase of the cracks (nearest non-crack phase), cracked fraction of LCO and LLZTO,
+crack length density (um/um^2), mean crack width (nm), and 3D crack objects per 1000 um^3, side by side.
