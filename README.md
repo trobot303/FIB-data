@@ -410,3 +410,18 @@ crops raw slices to a fixed size (e.g. LCO50 cycled ds_2 to the 1001 x 1001 px o
 than the limit are removed (dark spots at particle contacts, curtaining bits); a short piece that belongs to
 a crack that is long in another slice is kept. On the four annotated LCO50 slices 25 px keeps 97 % of the
 annotated crack area and removes 81 % of the unmarked short detections. Applied to LCO50 and LCO70 alike.
+
+### LCO50 cycled ds_2 crack model and crack width refinement
+
+`models/rf_cracks_lco50_ds2_v1.joblib`: for the BSE/SE-merged ds_2 stack, whose cracks are ~2 px wide and only
+~8 % of the LCO-pore grey step deep. Trained on the annotated ds_2 slice 0364 (`data/LCO50_cycled_ds2/`, strokes
+converted with `annotation_to_scribbles(..., snap=0)`, i.e. as drawn) plus the four annotated ds_1 slices, same
+recipe as the other crack models but `--class-weight 8`. Two-fold spatial cross-validation on slice 0364
+(train on one half, test on the other): weight 8 finds 61-69 % of the annotated crack pixels after growth vs
+53-55 % for weight 4; the ds_1 model finds almost none. Run: `scripts/analyse_lco50_cycled_ds2.sh`.
+
+**Width refinement** (`grow_cracks_3d.py --raw <slices> --refine-width`, default in all cycled scripts,
+`REFINE_WIDTH=0` to switch off): the classifier marks a 5-7 px band around a 2 px crack. After growth and the
+length limit, each crack is trimmed to the pixels at least half as dark (black top-hat, disk radius 4 px) as the
+darkest crack pixel within 3 px, i.e. the full width at half depth, plus the centre line. Mean width on ds_2:
+7 px -> 2.1 px; on ds_1: 4.4 px -> ~3 px. Applied to LCO50 ds_1, ds_2 and LCO70 alike.

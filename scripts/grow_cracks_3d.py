@@ -83,6 +83,34 @@ def drop_short(lab, orig, min_len, conn):
     return out
 
 
+def refine_width(lab, orig, raw_dir, stems, smooth=0.7, radius=4, win=7):
+    """Trim each slice's crack mask to the full width at half depth of the dark line."""
+    from skimage.morphology import closing, disk, skeletonize
+    out = lab.copy()
+    se = disk(radius)
+    for z, s in enumerate(stems):
+        m = lab[z] == 4
+        if not m.any():
+            continue
+        f = next((raw_dir / f"{s}{e}" for e in (".tif", ".tiff") if (raw_dir / f"{s}{e}").exists()), None)
+        if f is None:
+            raise SystemExit(f"--refine-width: no raw slice {s}.tif in {raw_dir}")
+        g = ndi.gaussian_filter(tifffile.imread(str(f)).astype(np.float32), smooth)
+        th = closing(g, se) - g                             # depth of dark lines narrower than 2*radius px
+        lm = ndi.maximum_filter(np.where(m, th, 0), size=win)
+        keep = m & (th >= 0.5 * lm) | (skeletonize(m) & m)
+        d = m & ~keep
+        if d.any():
+            prev = orig[z]
+            out[z][d & (prev != 4)] = prev[d & (prev != 4)]
+            rest = d & (prev == 4)
+            if rest.any():
+                src = (out[z] != 4) & ~d
+                _, (ir, ic) = ndi.distance_transform_edt(~src, return_indices=True)
+                out[z][rest] = out[z][ir[rest], ic[rest]]
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--labels", required=True)
@@ -95,6 +123,12 @@ def main():
     ap.add_argument("--min-length", type=float, default=0.0, metavar="PX",
                     help="after growth, drop 3D crack components whose longest in-plane piece is shorter than PX "
                          "(short dark spots between particles); pieces of a crack that is long in another slice are kept")
+    ap.add_argument("--raw", default=None,
+                    help="folder with the grey slices (same names as the labels without _labels); with --refine-width "
+                         "the crack masks are trimmed to the dark core of each crack")
+    ap.add_argument("--refine-width", action="store_true",
+                    help="keep only crack pixels at least half as dark (black top-hat) as the darkest pixel of the crack "
+                         "nearby (full width at half depth) plus the crack centre line; needs --raw")
     ap.add_argument("--tag", default="3d", help="name tag of the outputs next to <out>: labels_<tag>_stack.tif, <phase>_<tag>_stack.tif, fractions_<tag>.csv")
     a = ap.parse_args()
 
@@ -128,7 +162,7 @@ def main():
             print(f"  block {b + 1}/{nb}: slices {edges[b]}-{edges[b + 1] - 1}")
     del pc
     new = grown & (lab != 4)
-    orig = lab.copy() if a.min_length > 0 else None
+    orig = lab.copy() if (a.min_length > 0 or a.refine_width) else None
     lab[new] = 4
     after = int((lab == 4).sum())
     print(f"crack voxels: {before} -> {after} (+{100 * (after - before) / max(before, 1):.0f} %)")
@@ -136,6 +170,13 @@ def main():
         lab = drop_short(lab, orig, a.min_length, a.connectivity)
         kept = int((lab == 4).sum())
         print(f"length filter >= {a.min_length:g} px: crack voxels {after} -> {kept} (-{100 * (after - kept) / max(after, 1):.0f} %)")
+    if a.refine_width:
+        if not a.raw:
+            raise SystemExit("--refine-width needs --raw <grey slice folder>")
+        n0 = int((lab == 4).sum())
+        lab = refine_width(lab, orig, Path(a.raw), stems)
+        n1 = int((lab == 4).sum())
+        print(f"width refinement (half depth): crack voxels {n0} -> {n1} (-{100 * (n0 - n1) / max(n0, 1):.0f} %)")
 
     with open(out.parent / f"fractions_{a.tag}.csv", "w", newline="") as fh:
         w = csv.writer(fh); w.writerow(["slice"] + list(PHASES.values()))

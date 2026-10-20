@@ -14,3 +14,4 @@ results_pipeline/
 !models/rf_cracks_v5.joblib
 !models/rf_cracks_lco50_v1.joblib
 !models/rf_cracks_lco50_v2.joblib
+!models/rf_cracks_lco50_ds2_v1.joblib

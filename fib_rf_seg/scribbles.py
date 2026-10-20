@@ -188,7 +188,11 @@ def merge_labels(*labels: np.ndarray) -> np.ndarray:
 
 
 def annotation_to_scribbles(annotated_path, im_norm: np.ndarray, out_json, snap: int = 2):
-    """Red strokes (crack, snapped + skeletonised) and light-green strokes (not crack) -> scribble JSON."""
+    """Red strokes (crack, snapped + skeletonised) and light-green strokes (not crack) -> scribble JSON.
+
+    snap > 0 moves every stroke pixel to the darkest line within ``snap`` px (for wide or offset strokes);
+    snap = 0 keeps the centre line of the strokes as drawn (for thin strokes on faint cracks, where
+    snapping zig-zags on the noise)."""
     import json
     import tifffile
     from skimage.morphology import closing, skeletonize
@@ -200,12 +204,23 @@ def annotation_to_scribbles(annotated_path, im_norm: np.ndarray, out_json, snap:
     scale = 256 if a.max() > 255 else 1
     red = ((r - np.maximum(g, b)) > 60 * scale) & (r > 140 * scale)
     green = ((g - np.maximum(r, b)) > 40 * scale) & (g > 140 * scale)
+    if snap <= 0:                      # thin, well-placed strokes: use their centre line as drawn
+        snapped = skeletonize(red)
+        return _write_strokes(snapped, green, out_json)
     th = closing(im_norm, sk_disk(3)) - im_norm
     snapped = np.zeros_like(red)
     for y, x in zip(*np.nonzero(red)):
         y0, y1, x0, x1 = max(0, y - snap), min(th.shape[0], y + snap + 1), max(0, x - snap), min(th.shape[1], x + snap + 1)
         w = th[y0:y1, x0:x1]; iy, ix = np.unravel_index(np.argmax(w), w.shape); snapped[y0 + iy, x0 + ix] = True
-    snapped = skeletonize(ndi.binary_closing(snapped, iterations=1))
+    # re-join the snapped points of each stroke: close gaps up to ~4 px, but only inside the drawn stroke
+    # (dilated by the snap radius) so neighbouring strokes are not bridged
+    zone = ndi.binary_dilation(red, iterations=snap + 1)
+    snapped = skeletonize(ndi.binary_closing(snapped, structure=sk_disk(2)) & zone | snapped)
+    return _write_strokes(snapped, green, out_json)
+
+
+def _write_strokes(snapped, green, out_json):
+    import json
     strokes = []
     for phase, mask in ((4, snapped), (5, green)):
         lab, n = ndi.label(mask, np.ones((3, 3)))
