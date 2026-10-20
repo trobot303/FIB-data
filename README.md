@@ -401,3 +401,6 @@ LLZTO (`connectivity_y.py --tag 3d`), dimetric 3D rendering (`render_cracks_3d.p
 y-tortuosity (`TORTUOSITY=1`). `--tag 3d` makes these scripts read the grown-crack stacks
 `<phase>_3d_stack.tif` (use `--tag v3_3d` for the LCO70 aligned blocks). Set `VOXEL="x y z"` (um) to the
 real voxel size of the dataset (LCO50 cycled ds_1: 20 nm isotropic, default) and `COLLECTOR=top|bottom`.
+
+`scripts/crop_slices.py --in <folder> --out <folder> --size 1001 1001 [--anchor center | --origin Y0 X0] [--z Z0 Z1] [--dry-run] [--preview p.png]`
+crops raw slices to a fixed size (e.g. LCO50 cycled ds_2 to the 1001 x 1001 px of LCO70 cycled) before segmentation.
