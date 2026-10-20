@@ -404,3 +404,9 @@ real voxel size of the dataset (LCO50 cycled ds_1: 20 nm isotropic, default) and
 
 `scripts/crop_slices.py --in <folder> --out <folder> --size 1001 1001 [--anchor center | --origin Y0 X0] [--z Z0 Z1] [--dry-run] [--preview p.png]`
 crops raw slices to a fixed size (e.g. LCO50 cycled ds_2 to the 1001 x 1001 px of LCO70 cycled) before segmentation.
+
+**Crack length limit** (`grow_cracks_3d.py --min-length PX`, default 25 px = 0.5 um in the cycled scripts,
+`MIN_LENGTH=...` to change): after the 3D growth, crack components whose longest in-plane piece is shorter
+than the limit are removed (dark spots at particle contacts, curtaining bits); a short piece that belongs to
+a crack that is long in another slice is kept. On the four annotated LCO50 slices 25 px keeps 97 % of the
+annotated crack area and removes 81 % of the unmarked short detections. Applied to LCO50 and LCO70 alike.

@@ -50,6 +50,39 @@ def grow(lab, pc, low, conn):
     return keep[cc]
 
 
+def drop_short(lab, orig, min_len, conn):
+    """Remove 3D crack components whose longest 2D piece (major axis, per slice) is < min_len px.
+    Removed voxels get their label from before the growth if that was not crack, else the nearest
+    non-crack label in the slice."""
+    from skimage.measure import regionprops
+    st = ndi.generate_binary_structure(3, 3 if conn == 26 else (2 if conn == 18 else 1))
+    cc, n = ndi.label(lab == 4, structure=st)
+    if n == 0:
+        return lab
+    longest = np.zeros(n + 1)
+    for z in range(lab.shape[0]):
+        sl = cc[z]
+        if not sl.any():
+            continue
+        pieces, _ = ndi.label(sl > 0, structure=np.ones((3, 3)))
+        for r in regionprops(pieces, intensity_image=sl):
+            cid = int(r.intensity_max)
+            longest[cid] = max(longest[cid], r.axis_major_length)
+    drop = (longest < min_len)[cc] & (cc > 0)
+    out = lab.copy()
+    for z in np.nonzero(drop.any(axis=(1, 2)))[0]:
+        d = drop[z]
+        prev = orig[z]
+        out[z][d & (prev != 4)] = prev[d & (prev != 4)]
+        rest = d & (prev == 4)
+        if rest.any():
+            src = (out[z] != 4) & ~d
+            _, (ir, ic) = ndi.distance_transform_edt(~src, return_indices=True)
+            out[z][rest] = out[z][ir[rest], ic[rest]]
+    print(f"  {int((longest[1:] < min_len).sum())} of {n} 3D crack components shorter than {min_len:g} px dropped")
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--labels", required=True)
@@ -59,6 +92,9 @@ def main():
     ap.add_argument("--connectivity", type=int, choices=(6, 18, 26), default=26)
     ap.add_argument("--z-blocks", type=int, default=0, help="process the stack in N overlapping blocks (0 = whole stack)")
     ap.add_argument("--no-stacks", action="store_true", help="write only the per-slice labels")
+    ap.add_argument("--min-length", type=float, default=0.0, metavar="PX",
+                    help="after growth, drop 3D crack components whose longest in-plane piece is shorter than PX "
+                         "(short dark spots between particles); pieces of a crack that is long in another slice are kept")
     ap.add_argument("--tag", default="3d", help="name tag of the outputs next to <out>: labels_<tag>_stack.tif, <phase>_<tag>_stack.tif, fractions_<tag>.csv")
     a = ap.parse_args()
 
@@ -92,9 +128,14 @@ def main():
             print(f"  block {b + 1}/{nb}: slices {edges[b]}-{edges[b + 1] - 1}")
     del pc
     new = grown & (lab != 4)
+    orig = lab.copy() if a.min_length > 0 else None
     lab[new] = 4
     after = int((lab == 4).sum())
     print(f"crack voxels: {before} -> {after} (+{100 * (after - before) / max(before, 1):.0f} %)")
+    if a.min_length > 0:
+        lab = drop_short(lab, orig, a.min_length, a.connectivity)
+        kept = int((lab == 4).sum())
+        print(f"length filter >= {a.min_length:g} px: crack voxels {after} -> {kept} (-{100 * (after - kept) / max(after, 1):.0f} %)")
 
     with open(out.parent / f"fractions_{a.tag}.csv", "w", newline="") as fh:
         w = csv.writer(fh); w.writerow(["slice"] + list(PHASES.values()))

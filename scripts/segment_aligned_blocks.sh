@@ -13,6 +13,8 @@
 #   block*/overlay_v3_3d/overlay_stack.tif     RGB overlay of the grown cracks on the SEM slices
 # The earlier labels_v2 results (no shape filter, no growth) are left untouched.
 # Variables: MODEL (default models/rf_cracks_v5.joblib), LOW (0.2), RESUME=1 to keep existing labels_v3 slices.
+# MIN_LENGTH (default 25 px = 0.5 um): after growth, drop cracks whose longest in-plane piece is shorter
+# (spots between particles); a short piece of a crack that is long in another slice is kept.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 BASE="${1:-/Users/jehad/Desktop/work/paper 2/LCO70_cycled/Merged_clean_aligned}"
@@ -25,7 +27,7 @@ for b in "$BASE"/block*/; do
     echo "== $b"
     python -m fib_rf_seg predict --model "$MODEL" --input "$b/raw" --out "$b" \
         --labels-subdir "$L" --min-size 6 --crack-min-length 12 --crack-min-aspect 3 --stack --crack-proba $OW
-    python scripts/grow_cracks_3d.py --labels "$b/$L" --proba "$b/crack_proba" --out "$b/${L}_3d" --low "${LOW:-0.2}" --tag "${L#labels_}_3d"
+    python scripts/grow_cracks_3d.py --labels "$b/$L" --proba "$b/crack_proba" --out "$b/${L}_3d" --low "${LOW:-0.2}" --min-length "${MIN_LENGTH:-25}" --tag "${L#labels_}_3d"
     python scripts/overlay_stack.py --raw "$b/raw" --labels "$b/${L}_3d" --out "$b/overlay_${L#labels_}_3d" --no-slices
 done
 echo "== done. Crack fractions per block: $BASE/block*/fractions_${L#labels_}_3d.csv"
