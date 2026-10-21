@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Segment the LCO50 cycled stack (pore / LCO / LLZTO / crack) on the Mac with the crack model
 # trained on the annotated LCO50 cycled slices 045/053/262/272 plus the LCO70 cycled slices 15/22/38
-# (models/rf_cracks_lco50_v2.joblib). No --drop-vertical: this sample has near-vertical cracks and the
+# (models/rf_cracks_lco50_v3.joblib, with ridge-anisotropy features). No --drop-vertical: this sample has near-vertical cracks and the
 # model (oriented features + curtaining negatives) separates them from curtaining itself.
 #   cd ~/Documents/FIB-data && conda activate fibseg
 #   bash scripts/segment_lco50_cycled.sh [INPUT_DIR] [OUTPUT_DIR]
@@ -27,8 +27,8 @@ cd "$(dirname "$0")/.."
 IN="${1:-/Users/jehad/Desktop/work/paper 2/LCO50_cycled/ds_1_BSE_clean}"
 OUT="${2:-/Users/jehad/Desktop/work/paper 2/LCO50_cycled/ds_1_BSE_clean_segmented}"
 OW="--overwrite"; [ "${RESUME:-0}" = "1" ] && OW=""
-echo "== model: ${MODEL:-models/rf_cracks_lco50_v2.joblib}"
-python -m fib_rf_seg predict --model "${MODEL:-models/rf_cracks_lco50_v2.joblib}" --input "$IN" --out "$OUT" \
+echo "== model: ${MODEL:-models/rf_cracks_lco50_v3.joblib}"
+python -m fib_rf_seg predict --model "${MODEL:-models/rf_cracks_lco50_v3.joblib}" --input "$IN" --out "$OUT" \
     --min-size 6 --crack-min-length 12 --crack-min-aspect 3 --per-phase --stack --crack-proba $OW
 echo "== growing cracks along their length and through the slices (3D hysteresis, low ${LOW:-0.2}) -> $OUT/labels_3d"
 python scripts/grow_cracks_3d.py --labels "$OUT/labels" --proba "$OUT/crack_proba" --out "$OUT/labels_3d" --low "${LOW:-0.2}" --min-length "${MIN_LENGTH:-25}" --raw "$IN" $( [ "${REFINE_WIDTH:-1}" = "1" ] && echo --refine-width )

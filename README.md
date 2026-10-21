@@ -429,3 +429,25 @@ darkest crack pixel within 3 px, i.e. the full width at half depth, plus the cen
 **Crack statistics** (`scripts/crack_stats.py NAME=<segmented folder> ... [--labels labels_3d] [--z-um ...]`):
 phase fractions, host phase of the cracks (nearest non-crack phase), cracked fraction of LCO and LLZTO,
 crack length density (um/um^2), mean crack width (nm), and 3D crack objects per 1000 um^3, side by side.
+
+### ds_1 model v3 and the leave-one-slice-out test
+
+`models/rf_cracks_lco50_v3.joblib` (default of `segment_lco50_cycled.sh`): same training data and recipe as v2
+plus `--shape ridge` (three continuous ridge-anisotropy maps). Chosen by a leave-one-slice-out test on the
+four annotated ds_1 slices (train on three + LCO70 slices, test on the fourth, full chain incl. growth,
+25 px length limit and width refinement; score = share of the annotated crack pixels found within 2 px, and
+crack pixels farther than 4 px from any stroke):
+
+| variant | recall | outside px |
+|---|---|---|
+| A v2 recipe | 56 % | 217 |
+| B strokes as drawn (no snapping) | 56 % | 404 |
+| C B + crack weight 8 | 58 % | 538 |
+| D C + full shape features | 48 % | 460 |
+| E A + full shape features | 38 % | 65 |
+| F A + ridge anisotropy only (= v3) | 57 % | 154 |
+
+The object-based shape features (aspect ratio / width / size of the dark object a pixel belongs to,
+`--shape`) make the model stricter and blind to faint cracks; the continuous ridge-anisotropy maps keep the
+recall and remove ~30 % of the pixels outside the annotations. Slice 272 (cracks in the large LLZTO particle)
+is the hardest held-out case (~32 %) because the other slices hold almost no LLZTO cracks.
