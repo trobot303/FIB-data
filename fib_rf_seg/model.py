@@ -20,7 +20,7 @@ class TrainingSet:
     def add(self, im_norm: np.ndarray, labels: np.ndarray, sigmas=DEFAULT_SIGMAS,
             max_per_class: int | None = 20000, rng: np.random.Generator | None = None,
             boundary_frac: float = 0.0, boundary_dist: int = 4, force: np.ndarray | None = None,
-            oriented: bool = False) -> None:
+            oriented: bool = False, shape: bool = False) -> None:
         """Sample up to *max_per_class* labelled pixels per phase.
 
         With ``boundary_frac`` > 0, that share of each class's samples is drawn
@@ -28,7 +28,7 @@ class TrainingSet:
         sees enough edge pixels to place boundaries precisely.
         """
         rng = rng or np.random.default_rng(0)
-        F = compute_features(im_norm, sigmas, oriented=oriented)
+        F = compute_features(im_norm, sigmas, oriented=oriented, shape=shape)
         Ff = F.reshape(-1, F.shape[-1])
         near = None
         if boundary_frac > 0:
@@ -73,11 +73,14 @@ def train(ts: TrainingSet, n_estimators: int = 200, max_depth: int | None = 20,
     return rf
 
 
-def predict(rf, im_norm: np.ndarray, sigmas=DEFAULT_SIGMAS, chunk_rows: int = 128, oriented: bool | None = None):
+def predict(rf, im_norm: np.ndarray, sigmas=DEFAULT_SIGMAS, chunk_rows: int = 128, oriented: bool | None = None,
+            shape: bool | None = None):
     """Return (labels uint8 HxW, probabilities HxWxC) for one normalised slice."""
     if oriented is None:
         oriented = bool(getattr(rf, "oriented_features_", False))
-    F = compute_features(im_norm, sigmas, oriented=oriented)
+    if shape is None:
+        shape = bool(getattr(rf, "shape_features_", False))
+    F = compute_features(im_norm, sigmas, oriented=oriented, shape=shape)
     H, W, n = F.shape
     classes = rf.classes_
     proba = np.empty((H, W, len(classes)), dtype=np.float32)
@@ -88,14 +91,17 @@ def predict(rf, im_norm: np.ndarray, sigmas=DEFAULT_SIGMAS, chunk_rows: int = 12
     return labels, proba
 
 
-def save_model(rf, path: str | Path, sigmas=DEFAULT_SIGMAS, norm: dict | None = None, oriented: bool = False) -> None:
+def save_model(rf, path: str | Path, sigmas=DEFAULT_SIGMAS, norm: dict | None = None, oriented: bool = False,
+               shape: bool = False) -> None:
     rf.oriented_features_ = oriented
-    joblib.dump({"rf": rf, "sigmas": tuple(sigmas), "feature_names": feature_names(sigmas, oriented),
-                 "norm": norm or {}, "oriented": oriented}, path, compress=3)
+    rf.shape_features_ = shape
+    joblib.dump({"rf": rf, "sigmas": tuple(sigmas), "feature_names": feature_names(sigmas, oriented, shape),
+                 "norm": norm or {}, "oriented": oriented, "shape": shape}, path, compress=3)
 
 
 def load_model(path: str | Path):
     d = joblib.load(path)
     rf = d["rf"]
     rf.oriented_features_ = bool(d.get("oriented", False))
+    rf.shape_features_ = bool(d.get("shape", False))
     return rf, d["sigmas"], d.get("norm", {})
