@@ -3,7 +3,7 @@
     python -m fib_rf_seg.label --image data/LCO60_Processed001.tiff \
         --out data/labels/LCO60_Processed001_scribbles.json [--model models/rf.joblib]
 
-Keys:  1 = pore, 2 = LCO, 3 = LLZTO (choose the phase to paint)
+Keys:  1 = pore, 2 = LCO, 3 = LLZTO, 4 = crack (choose the phase to paint)
        [ / ]  smaller / larger brush      u = undo last stroke
        o = toggle model overlay (if --model given)      s = save      q = quit
 Drag with the left mouse button to paint.  Existing strokes in --out are loaded
@@ -17,6 +17,14 @@ from pathlib import Path
 
 import numpy as np
 import matplotlib
+
+if matplotlib.get_backend().lower().endswith("agg"):      # need an interactive window
+    for _b in ("MacOSX", "QtAgg", "TkAgg"):
+        try:
+            matplotlib.use(_b)
+            break
+        except Exception:
+            continue
 import matplotlib.pyplot as plt
 
 from . import PHASES, PHASE_COLORS
@@ -46,7 +54,7 @@ def main(argv=None):
 
     fig, ax = plt.subplots(figsize=(16, 16 * im.shape[0] / im.shape[1]))
     base = ax.imshow(overlay(im, pred, 0.35) if pred is not None else im, cmap="gray", vmin=0, vmax=1)
-    scr_art = ax.imshow(np.ma.masked_equal(rasterise(data, im.shape), 0), cmap=CMAP, vmin=0, vmax=3, interpolation="nearest")
+    scr_art = ax.imshow(np.ma.masked_equal(rasterise(data, im.shape), 0), cmap=CMAP, vmin=0, vmax=max(PHASES), interpolation="nearest")
     if a.region:
         y0, y1, x0, x1 = a.region
         ax.set_xlim(x0, x1); ax.set_ylim(y1, y0)
@@ -80,7 +88,7 @@ def main(argv=None):
 
     def on_key(ev):
         k = ev.key
-        if k in ("1", "2", "3"):
+        if k in ("1", "2", "3", "4"):
             state["phase"] = int(k); title()
         elif k == "[":
             state["brush"] = max(1, state["brush"] - 1); title()
@@ -103,7 +111,8 @@ def main(argv=None):
     fig.canvas.mpl_connect("button_release_event", on_release)
     fig.canvas.mpl_connect("key_press_event", on_key)
     title()
-    plt.show()
+    print(f"backend {matplotlib.get_backend()}; window open - keys: 1/2/3/4 phase, [ ] brush, u undo, o overlay, s save, q quit")
+    plt.show(block=True)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,17 @@
+# Dependencies as installed in the Claude cloud session (Python 3.13, no GPU, PyPI only;
+# download.pytorch.org is not reachable there, so torch comes from PyPI).
+# The pinned requirements.txt targets Python 3.10-3.12 on the workstation.
+torch
+numpy
+scipy
+scikit-image
+tifffile
+imagecodecs
+pyyaml
+matplotlib
+pandas
+porespy
+taufactor
+psutil
+tqdm
+pytest

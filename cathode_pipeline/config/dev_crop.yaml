@@ -1,0 +1,114 @@
+# Development config: small crops of the real stacks for fast local runs.
+# Everything else is identical to default.yaml. Results go to results_dev/.
+schema_version: 1
+
+project:
+  name: lco_llzto_dev_crops
+  description: "cropped subsets for development / smoke tests"
+
+paths:
+  data_root: "../.."
+  output_root: "../results_dev"
+  log_dir: "../results_dev/logs"
+
+runtime:
+  log_level: INFO
+  n_workers: 4
+  device: auto
+  memory_log: true
+  label_format: npy
+  random_seed: 0
+
+voxel:
+  size_nm: 50.0
+  through_thickness_axis: y
+  current_collector_face: min
+
+samples:
+  - name: LCO50
+    nominal_lco_vol_fraction: 0.50
+    input_dir: processed_LCO50
+    pattern: "slice_*.tif"
+    slice_range: [400, 520]
+    crop: {z: [null, null], y: [300, 900], x: [800, 1400]}
+    downsample: 1
+    overrides: {}
+  - name: LCO60
+    nominal_lco_vol_fraction: 0.60
+    input_dir: processed_LCO60
+    pattern: "*Kuwahara*.tiff"
+    slice_range: [300, 420]
+    crop: {z: [null, null], y: [100, 600], x: [500, 1100]}
+    downsample: 1
+    overrides: {}
+  - name: LCO70
+    nominal_lco_vol_fraction: 0.70
+    input_dir: processed_LCO70
+    pattern: "*Kuwahara*.tiff"
+    slice_range: [300, 420]
+    crop: {z: [null, null], y: [100, 600], x: [500, 1100]}
+    downsample: 1
+    overrides: {}
+
+segmentation:
+  normalize: {method: percentile, percentiles: [0.1, 99.9], per_slice: false}
+  preprocess: {filter: none, sigma: 1.0, size: 3, in_3d: true}
+  thresholds: {method: multi_otsu, n_classes: 3, manual: [null, null], histogram_subsample: 8}
+  intensity_order: [pore, lco, llzto]
+  postprocess:
+    min_object_voxels: {pore: 27, lco: 125, llzto: 125}
+    fill_holes: {enabled: true, max_voxels: 1000}
+    majority_filter_radius: 0
+    chunk_z: 64
+    chunk_margin: 16
+  qc: {overlay_slices: [0.25, 0.5, 0.75], save_histogram: true}
+
+connectivity:
+  structure: 6
+  reference_faces: {lco: [collector], llzto: [separator], pore: [collector, separator]}
+  report_largest_n_clusters: 10
+  save_connected_labels: true
+
+surface:
+  method: marching_cubes
+  marching_cubes: {smoothing_sigma: 0.7, step_size: 1}
+  voxel_faces: {correction_factor: 0.667}
+  interfaces: [[lco, llzto], [lco, pore], [llzto, pore]]
+  active_requires_connected: true
+  chunk_z: 64
+
+tortuosity:
+  backend: taufactor
+  phases: [lco, llzto]
+  directions: [x, y, z]
+  use_connected_only: true
+  taufactor: {convergence: 0.02, max_iterations: 5000, check_every: 100}
+  porespy: {solver_tol: 1.0e-6}
+  downsample: 2
+
+grains:
+  phases: [lco, llzto]
+  method: watershed_hmax
+  snow: {sigma: 0.4, r_max: 4}
+  watershed_hmax: {h: 2.0}
+  min_grain_voxels: 64
+  measure: {equivalent_diameter: true, sphericity: true, n_bins_size_distribution: 30}
+  downsample: 2
+
+profiles:
+  slab_thickness_um: 1.0
+  quantities: [volume_fraction, connected_fraction, interface_density, grain_count]
+  phases: [pore, lco, llzto]
+  normalize_position: true
+
+report:
+  compare_with_nominal: true
+  reference_values_csv: null
+  figures: {format: png, dpi: 150, style: default}
+  tables: {float_format: "%.4f"}
+
+plotting:
+  colors: {pore: "#1f1f1f", lco: "#d95f02", llzto: "#1b9e77"}
+  sample_colors: {LCO50: "#4477aa", LCO60: "#ee6677", LCO70: "#228833"}
+  interface_colors: {lco-llzto: "#7570b3", lco-pore: "#e6ab02", llzto-pore: "#66a61e"}
+  overlay_alpha: 0.45
