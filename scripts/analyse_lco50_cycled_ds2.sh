@@ -5,9 +5,11 @@
 # shape filter, 3D growth, 25 px length limit, width refinement, overlays, y-connectivity, 3D rendering.
 #   cd ~/Documents/FIB-data && conda activate fibseg
 #   bash scripts/analyse_lco50_cycled_ds2.sh [INPUT_DIR] [OUTPUT_DIR]
-# Voxel 20 nm isotropic (dataset_info_5050.hdr).  Other variables as in scripts/analyse_lco50_cycled.sh.
+# Voxel 20 nm isotropic (dataset_info_5050.hdr), crack length limit 25 px = 0.5 um.  Other variables as in
+# scripts/analyse_lco50_cycled.sh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 IN="${1:-/Users/jehad/Desktop/work/paper 2/LCO50_cycled/ds_2_Merged_clean_1001}"
 OUT="${2:-/Users/jehad/Desktop/work/paper 2/LCO50_cycled/ds_2_Merged_clean_1001_segmented}"
-MODEL="${MODEL:-models/rf_cracks_lco50_ds2_v1.joblib}" bash scripts/analyse_lco50_cycled.sh "$IN" "$OUT"
+MODEL="${MODEL:-models/rf_cracks_lco50_ds2_v1.joblib}" VOXEL="${VOXEL:-0.02 0.02 0.02}" MIN_LENGTH="${MIN_LENGTH:-25}" \
+    bash scripts/analyse_lco50_cycled.sh "$IN" "$OUT"

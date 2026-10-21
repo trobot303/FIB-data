@@ -400,7 +400,7 @@ growth + overlay stacks (`segment_lco50_cycled.sh`), y-connectivity of LCO (crac
 LLZTO (`connectivity_y.py --tag 3d`), dimetric 3D rendering (`render_cracks_3d.py --tag 3d`), optional
 y-tortuosity (`TORTUOSITY=1`). `--tag 3d` makes these scripts read the grown-crack stacks
 `<phase>_3d_stack.tif` (use `--tag v3_3d` for the LCO70 aligned blocks). Set `VOXEL="x y z"` (um) to the
-real voxel size of the dataset (LCO50 cycled ds_1: 20 nm isotropic, default) and `COLLECTOR=top|bottom`.
+real voxel size of the dataset (LCO50 cycled ds_1: 50 nm isotropic per dataset_info.hdr, default; ds_2: 20 nm isotropic) and `COLLECTOR=top|bottom`.
 
 `scripts/crop_slices.py --in <folder> --out <folder> --size 1001 1001 [--anchor center | --origin Y0 X0] [--z Z0 Z1] [--dry-run] [--preview p.png]`
 crops raw slices to a fixed size (e.g. LCO50 cycled ds_2 to the 1001 x 1001 px of LCO70 cycled) before segmentation.
@@ -451,3 +451,9 @@ The object-based shape features (aspect ratio / width / size of the dark object 
 `--shape`) make the model stricter and blind to faint cracks; the continuous ridge-anisotropy maps keep the
 recall and remove ~30 % of the pixels outside the annotations. Slice 272 (cracks in the large LLZTO particle)
 is the hardest held-out case (~32 %) because the other slices hold almost no LLZTO cracks.
+
+**Voxel sizes of the cycled samples.** LCO50 cycled ds_1 (A970_5to5_cycled dynamic_1): 50 nm pixels, 50 nm slices,
+field 109 x 46 um; the 1001 x 1001 px crop is 50 x 50 um. LCO50 cycled ds_2 (A970_5050_cycled try3 Dataset 1): 20 nm
+isotropic, crop 20 x 20 um. LCO70 cycled: 20 nm pixels, 50 nm slices. The pixel-based noise filters (6 px islands, 12 px
+line filter, width refinement) stay in pixels; the crack length limit is kept at 0.5 um in all samples (10 px for ds_1,
+25 px for ds_2 and LCO70). `crack_stats.py` takes `--px-um 0.05` for ds_1.
