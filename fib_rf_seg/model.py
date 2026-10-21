@@ -20,7 +20,7 @@ class TrainingSet:
     def add(self, im_norm: np.ndarray, labels: np.ndarray, sigmas=DEFAULT_SIGMAS,
             max_per_class: int | None = 20000, rng: np.random.Generator | None = None,
             boundary_frac: float = 0.0, boundary_dist: int = 4, force: np.ndarray | None = None,
-            oriented: bool = False, shape: bool = False) -> None:
+            oriented: bool = False, shape=False) -> None:
         """Sample up to *max_per_class* labelled pixels per phase.
 
         With ``boundary_frac`` > 0, that share of each class's samples is drawn
@@ -74,12 +74,12 @@ def train(ts: TrainingSet, n_estimators: int = 200, max_depth: int | None = 20,
 
 
 def predict(rf, im_norm: np.ndarray, sigmas=DEFAULT_SIGMAS, chunk_rows: int = 128, oriented: bool | None = None,
-            shape: bool | None = None):
+            shape=None):
     """Return (labels uint8 HxW, probabilities HxWxC) for one normalised slice."""
     if oriented is None:
         oriented = bool(getattr(rf, "oriented_features_", False))
     if shape is None:
-        shape = bool(getattr(rf, "shape_features_", False))
+        shape = getattr(rf, "shape_features_", False)
     F = compute_features(im_norm, sigmas, oriented=oriented, shape=shape)
     H, W, n = F.shape
     classes = rf.classes_
@@ -92,7 +92,7 @@ def predict(rf, im_norm: np.ndarray, sigmas=DEFAULT_SIGMAS, chunk_rows: int = 12
 
 
 def save_model(rf, path: str | Path, sigmas=DEFAULT_SIGMAS, norm: dict | None = None, oriented: bool = False,
-               shape: bool = False) -> None:
+               shape=False) -> None:
     rf.oriented_features_ = oriented
     rf.shape_features_ = shape
     joblib.dump({"rf": rf, "sigmas": tuple(sigmas), "feature_names": feature_names(sigmas, oriented, shape),
@@ -103,5 +103,5 @@ def load_model(path: str | Path):
     d = joblib.load(path)
     rf = d["rf"]
     rf.oriented_features_ = bool(d.get("oriented", False))
-    rf.shape_features_ = bool(d.get("shape", False))
+    rf.shape_features_ = d.get("shape", False)
     return rf, d["sigmas"], d.get("norm", {})

@@ -301,7 +301,7 @@ def main(argv=None):
     t.add_argument("--crack-llzto", type=float, default=0.0, metavar="CONTRAST", help="also allow cracks inside LLZTO: automatic crack seeds at CONTRAST x (LLZTO-LCO grey difference) (e.g. 0.15), curtaining negatives inside LLZTO too; 0 = cracks only in LCO")
     t.add_argument("--curtaining-negatives", action="store_true", help="label vertical dark ridges (FIB curtaining) automatically as 'not crack'")
     t.add_argument("--oriented", action="store_true", help="add orientation-sensitive features (row/column Hessian and gradients) so vertical curtaining and inclined cracks can be told apart")
-    t.add_argument("--shape", action="store_true", help="add object-shape features (ridge anisotropy; aspect ratio, width and size of the dark object a pixel belongs to) so that cracks and pores, both dark, are told apart by shape")
+    t.add_argument("--shape", nargs="?", const=True, default=False, choices=(True, "ridge"), metavar="[ridge]", help="add object-shape features (ridge anisotropy; aspect ratio, width and size of the dark object a pixel belongs to) so that cracks and pores, both dark, are told apart by shape; '--shape ridge' adds only the continuous ridge-anisotropy maps")
     t.add_argument("--dense", action="store_true", help="propagate seeds/scribbles to all pixels with a watershed before sampling")
     t.add_argument("--drop-boundary", type=int, default=1, help="with --dense: unlabel pixels this close to watershed lines")
     t.add_argument("--max-per-class", type=int, default=20000)

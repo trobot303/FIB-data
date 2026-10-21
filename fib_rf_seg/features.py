@@ -21,7 +21,7 @@ SHAPE_MASKS = ((3, 0.02), (3, 0.05), (8, 0.05), (8, 0.15), (0, 0.0))
 RIDGE_MASKS = ((1.0, 0.7, 0.004), (2.0, 0.7, 0.002))   # (sigma, min anisotropy, min dark-line curvature)
 
 
-def feature_names(sigmas=DEFAULT_SIGMAS, oriented: bool = False, shape: bool = False) -> list[str]:
+def feature_names(sigmas=DEFAULT_SIGMAS, oriented: bool = False, shape=False) -> list[str]:
     names = ["intensity"]
     for s in sigmas:
         names += [f"gauss_{s}", f"gradmag_{s}", f"log_{s}", f"hess_max_{s}", f"hess_min_{s}", f"std_{s}"]
@@ -31,6 +31,7 @@ def feature_names(sigmas=DEFAULT_SIGMAS, oriented: bool = False, shape: bool = F
         names.append(f"dog_{a}_{b}")
     if shape:
         names += [f"ridge_aniso_{s}" for s in SHAPE_SIGMAS]
+    if shape and shape != "ridge":
         for r, t in SHAPE_MASKS:
             tag = f"dark_r{r}_t{t:g}" if r else "pore_mask"
             names += [f"{tag}_aspect", f"{tag}_width", f"{tag}_logarea"]
@@ -56,7 +57,7 @@ def _component_shape(mask):
     return [asp, wid, lar]
 
 
-def shape_features(im: np.ndarray) -> list[np.ndarray]:
+def shape_features(im: np.ndarray, ridge_only: bool = False) -> list[np.ndarray]:
     """Object-shape features for telling cracks (thin, elongated dark lines) from pores (compact dark blobs).
 
     * ridge anisotropy per scale: sign(L) (|L| - |l|) / (|L| + |l|) with L the Hessian eigenvalue of
@@ -83,6 +84,8 @@ def shape_features(im: np.ndarray) -> list[np.ndarray]:
         aniso[s] = (np.sign(big) * np.abs(a0 - a1) / (a0 + a1 + eps)).astype(np.float32)
         bigs[s] = big
     feats += [aniso[s] for s in SHAPE_SIGMAS]
+    if ridge_only:
+        return feats
     g = ndi.gaussian_filter(im, 1.0)
     t1 = threshold_multiotsu(g, classes=3)[0]
     tophat = {r: closing(g, disk(r)) - g for r, _ in SHAPE_MASKS if r}
@@ -93,14 +96,15 @@ def shape_features(im: np.ndarray) -> list[np.ndarray]:
     return feats
 
 
-def compute_features(im: np.ndarray, sigmas=DEFAULT_SIGMAS, oriented: bool = False, shape: bool = False) -> np.ndarray:
+def compute_features(im: np.ndarray, sigmas=DEFAULT_SIGMAS, oriented: bool = False, shape=False) -> np.ndarray:
     """Return an (H, W, n_features) float32 array for a normalised 2-D image.
 
     ``oriented`` adds the row/column Hessian diagonal and the absolute row/column
     gradients per scale, so that the classifier can tell vertical structures
     (FIB curtaining) from inclined ones (cracks).  ``shape`` adds the object-shape
     features of :func:`shape_features` (aspect ratio and width of the dark object a
-    pixel belongs to), so that cracks and pores, both dark, are told apart by shape.
+    pixel belongs to), so that cracks and pores, both dark, are told apart by shape;
+    ``shape="ridge"`` adds only the continuous ridge-anisotropy maps.
     """
     im = im.astype(np.float32)
     feats = [im]
@@ -121,5 +125,5 @@ def compute_features(im: np.ndarray, sigmas=DEFAULT_SIGMAS, oriented: bool = Fal
     for a, b in zip(sigmas[:-1], sigmas[1:]):
         feats.append(gauss[a] - gauss[b])
     if shape:
-        feats += shape_features(im)
+        feats += shape_features(im, ridge_only=(shape == "ridge"))
     return np.stack(feats, axis=-1).astype(np.float32)
