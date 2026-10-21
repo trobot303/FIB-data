@@ -135,6 +135,8 @@ def main():
     lab_dir, pr_dir, out = Path(a.labels), Path(a.proba), Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     files = sorted([p for p in lab_dir.glob("*_labels.tif")], key=natural_key)
+    if not files:
+        raise SystemExit(f"no *_labels.tif in {lab_dir} - run the segmentation first (e.g. scripts/analyse_lco50_cycled.sh)")
     stems = [p.name[:-len("_labels.tif")] for p in files]
     missing = [s for s in stems if not (pr_dir / f"{s}_crackp.tif").exists()]
     if missing:

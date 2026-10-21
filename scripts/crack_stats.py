@@ -29,9 +29,11 @@ def natural_key(p: Path):
 
 
 def stats(folder, labels, px, zum):
+    if not Path(folder).is_dir():
+        raise SystemExit(f"folder does not exist: {folder} - run the segmentation for it first")
     files = sorted(Path(folder, labels).glob("*_labels.tif"), key=natural_key)
     if not files:
-        raise SystemExit(f"no *_labels.tif in {Path(folder, labels)}")
+        raise SystemExit(f"no *_labels.tif in {Path(folder, labels)} - the segmentation of this folder did not finish")
     n = np.zeros(5); host = np.zeros(4); skel_len = []; area_px = 0; skel_tot = 0; crack3d = []
     for f in files:
         lab = tifffile.imread(str(f))
