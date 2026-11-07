@@ -24,10 +24,10 @@ import numpy as np
 
 from . import PHASES
 from .io import crop, destripe, list_slices, normalise, normalise_phases, read_labels, read_slice, write_labels
-from .features import DEFAULT_SIGMAS
+from .features import DEFAULT_SIGMAS, zmaps
 from .model import TrainingSet, load_model, predict, save_model, train
 from .postprocess import clean_labels, drop_vertical_cracks, filter_cracks, phase_fractions, place_solid_edges, pore_level_auto, snap_to_edges, solid_level_auto, trim_pores
-from .scribbles import auto_seeds, curtaining_negatives, densify, load_scribbles, merge_labels
+from .scribbles import auto_seeds, crack_candidates, curtaining_negatives, densify, load_scribbles, merge_labels
 from .viz import review_figure
 
 
@@ -60,6 +60,36 @@ def _load_norm(path, lo, hi, smooth=None, norm="bounds", box=None, strip=False, 
     if norm == "phase":
         return normalise_phases(im)
     return normalise(im, lo, hi)
+
+
+def _neighbour_maps(files, i, k, load, cache):
+    """zmaps of the k slices on each side of files[i] (ends repeated), loaded with ``load(path)`` and cached
+    by index in ``cache`` (entries more than k slices behind i are dropped)."""
+    if k <= 0:
+        return None
+    idx = [min(max(j, 0), len(files) - 1) for j in list(range(i - k, i)) + list(range(i + 1, i + k + 1))]
+    for j in list(cache):
+        if j < i - k:
+            del cache[j]
+    for j in idx:
+        if j not in cache:
+            cache[j] = zmaps(load(files[j]))
+    return [cache[j] for j in idx]
+
+
+def _stack_neighbours(path, k, load):
+    """zmaps of the k slices on each side of the slice file ``path`` inside its folder (for train / review)."""
+    if k <= 0:
+        return None
+    path = Path(path)
+    files = list_slices(path.parent)
+    names = [f.name for f in files]
+    if path.name not in names:
+        sys.exit(f"--zctx: {path.name} is not a slice of the stack {path.parent}")
+    i = names.index(path.name)
+    if i < k or i > len(files) - 1 - k:
+        print(f"  zctx: {path.name} has fewer than {k} neighbours on one side; the end slice is repeated")
+    return _neighbour_maps(files, i, k, load, {})
 
 
 def _level(arg, im_norm, auto_fn):
@@ -97,7 +127,7 @@ def apply_edge_levels(lab, im_norm, pore_level=None, solid_level=None, band=3, v
 def build_training_labels(im_norm, scribble_path=None, label_path=None, auto=False,
                           auto_erode=3, auto_margin=0.35, dense=False, drop_boundary=1,
                           pore_level=None, band=3, solid_level=None, crack_width=0, crack_contrast=0.35,
-                          curtain_neg=False, crack_llzto=0.0):
+                          curtain_neg=False, crack_llzto=0.0, ignore_unmarked=0.0):
     parts = []
     if auto:
         seeds, (t1, t2) = auto_seeds(im_norm, erode=auto_erode, margin=auto_margin,
@@ -146,6 +176,16 @@ def build_training_labels(im_norm, scribble_path=None, label_path=None, auto=Fal
             print(f"  not-crack marks: {int(force.sum())} px -> " + ", ".join(f"{PHASES[k]}={int((lab[force] == k).sum())}" for k in (1, 2, 3)))
     else:
         lab[notcrack] = 0
+    if ignore_unmarked > 0 and cracks.any():
+        # thin dark lines away from the crack strokes are probably cracks that were not marked: leave them
+        # unlabelled instead of training them as LCO / pore ("not crack")
+        from scipy import ndimage as ndi
+        cand = crack_candidates(im_norm, width=3, contrast=ignore_unmarked, min_len=8,
+                                exclude_vertical_deg=20.0 if curtain_neg else 0.0)
+        cand &= ~ndi.binary_dilation(cracks, iterations=3)
+        cand = ndi.binary_dilation(cand, iterations=1) & ~force & (lab != 4)
+        lab[cand] = 0
+        print(f"  unmarked crack-like lines left unlabelled: {int(cand.sum())} px")
     return lab, force
 
 
@@ -160,10 +200,11 @@ def cmd_train(a):
         im = _load_norm(img, a.lo, a.hi, a.smooth, a.norm or "bounds", a.crop, a.destripe)
         lab, force = build_training_labels(im, s, l, a.auto_seeds, a.auto_erode, a.auto_margin, a.dense, a.drop_boundary,
                                            a.pore_level, a.band, a.solid_level, a.crack_width, a.crack_contrast,
-                                           a.curtaining_negatives, a.crack_llzto)
+                                           a.curtaining_negatives, a.crack_llzto, a.ignore_unmarked)
+        neigh = _stack_neighbours(img, a.zctx, lambda f: _load_norm(f, a.lo, a.hi, a.smooth, a.norm or "bounds", a.crop, a.destripe))
         print("  labels used: " + ", ".join(f"{PHASES[k]}={int((lab == k).sum())}" for k in PHASES))
         ts.add(im, lab, sigmas=sigmas, max_per_class=a.max_per_class, boundary_frac=a.boundary_frac, force=force,
-               oriented=a.oriented, shape=a.shape)
+               oriented=a.oriented, shape=a.shape, zctx=a.zctx, neigh=neigh)
     t0 = time.time()
     mf = a.max_features
     mf = None if mf == "all" else (float(mf) if mf.replace(".", "", 1).isdigit() else mf)
@@ -171,7 +212,7 @@ def cmd_train(a):
     rf = train(ts, n_estimators=a.trees, max_depth=a.max_depth, max_features=mf, class_weight=cw)
     print(f"[train] {len(ts.arrays()[1])} samples, {a.trees} trees, {time.time() - t0:.1f}s, OOB accuracy {rf.oob_score_:.4f}")
     save_model(rf, a.model, sigmas=sigmas, norm={"lo": a.lo, "hi": a.hi, "smooth": a.smooth, "norm": a.norm or "bounds", "destripe": a.destripe},
-               oriented=a.oriented, shape=a.shape)
+               oriented=a.oriented, shape=a.shape, zctx=a.zctx)
     print(f"[train] saved {a.model}")
 
 
@@ -216,10 +257,15 @@ def cmd_predict(a):
     stacks = {k: [] for k in list(PHASES) + [0]} if a.stack else None
     summary = {}
     t_start = time.time()
+    zk = int(getattr(rf, "zctx_", 0))
+    if zk:
+        print(f"[predict] z-context model: uses {zk} slices on each side (ends repeated)")
+    zcache = {}
+    loadf = lambda p: _load_norm(p, lo, hi, smooth, mode, box, strip, a.rescale)
     for i, f in enumerate(files, 1):
         if a.overwrite or not (out / ldir / f"{f.stem}_labels.tif").exists():
-            im = _load_norm(f, lo, hi, smooth, mode, box, strip, a.rescale)
-            lab, proba = predict(rf, im, sigmas)
+            im = loadf(f)
+            lab, proba = predict(rf, im, sigmas, neigh=_neighbour_maps(files, i - 1, zk, loadf, zcache))
             lab = _postprocess(lab, im, a)
             if a.rescale != 1.0:                       # back to the original pixel grid
                 from scipy import ndimage as ndi
@@ -274,8 +320,9 @@ def cmd_review(a):
     smooth = a.smooth if a.smooth is not None else norm.get("smooth")
     mode = a.norm or norm.get("norm", "bounds")
     strip = a.destripe or bool(norm.get("destripe", False))
-    im = _load_norm(a.image, lo, hi, smooth, mode, tuple(a.crop) if a.crop else None, strip, a.rescale)
-    lab, proba = predict(rf, im, sigmas)
+    loadf = lambda p: _load_norm(p, lo, hi, smooth, mode, tuple(a.crop) if a.crop else None, strip, a.rescale)
+    im = loadf(a.image)
+    lab, proba = predict(rf, im, sigmas, neigh=_stack_neighbours(a.image, int(getattr(rf, "zctx_", 0)), loadf))
     lab = _postprocess(lab, im, a)
     scr = load_scribbles(a.scribbles, im.shape) if a.scribbles else None
     region = tuple(a.region) if a.region else None
@@ -314,6 +361,14 @@ def main(argv=None):
     t.add_argument("--max-depth", type=int, default=20)
     t.add_argument("--class-weight", default="balanced", help="'balanced' (default; not for crack models), 'none', or a number = weight of the crack class")
     t.add_argument("--max-features", default="sqrt", help="features tried per split: sqrt, log2, a fraction (0.5) or all")
+    t.add_argument("--zctx", type=int, default=0, metavar="K",
+                   help="z-context features: dark-line maps of the K slices on each side of every training image "
+                        "(taken from the image's own folder, which must be the slice stack); predict then needs "
+                        "the whole stack folder as --input")
+    t.add_argument("--ignore-unmarked", type=float, default=0.0, metavar="CONTRAST",
+                   help="leave thin dark lines away from the crack strokes unlabelled (instead of training them as "
+                        "LCO/pore) when the strokes do not mark every crack; CONTRAST = black top-hat depth as a "
+                        "fraction of the LCO-pore grey difference, e.g. 0.2; 0 = off")
     t.add_argument("--model", required=True)
     _norm_args(t)
     t.set_defaults(func=cmd_train)

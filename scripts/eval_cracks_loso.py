@@ -62,7 +62,19 @@ def main():
     ap.add_argument("--post", default=POST, help="predict post-processing arguments")
     ap.add_argument("--low", type=float, default=0.2, help="growth threshold of grow_cracks_3d.py")
     ap.add_argument("--min-length", type=float, default=25)
+    ap.add_argument("--refine", type=int, default=1, help="1 = --refine-width in grow_cracks_3d.py (default), 0 = off")
+    ap.add_argument("--stack", default=None, help="folder of consecutive LCO70 cycled slices containing the annotated ones "
+                    "(e.g. data/LCO70_cycled_stack): the LCO70 images are read from it (needed for --zctx recipes) and the "
+                    "held-out slice is predicted with its +-ZWIN neighbours, so the 3D growth works as on the full stack")
+    ap.add_argument("--zwin", type=int, default=5)
+    ap.add_argument("--train", choices=("all", "lco70"), default="all", help="annotated slices used for training")
     a = ap.parse_args()
+    stack = (ROOT / a.stack) if a.stack and not Path(a.stack).is_absolute() else (Path(a.stack) if a.stack else None)
+
+    def img_path(k):
+        if stack is not None and k.startswith("LCO70_cycled/"):
+            return stack / (k.split("/", 1)[1] + ".tif")
+        return next((ROOT / "data").glob(k + ".tif*"))
     out = (ROOT / a.out) if not Path(a.out).is_absolute() else Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     rows = []
@@ -74,19 +86,26 @@ def main():
         if not model.exists():
             train = []
             for k, j in ANNOTATED.items():
-                if k != h:
-                    train += ["--image", str(next((ROOT / "data").glob(k + ".tif*"))), "--scribbles", str(ROOT / "data/labels" / j)]
+                if k != h and (a.train == "all" or k.startswith("LCO70")):
+                    train += ["--image", str(img_path(k)), "--scribbles", str(ROOT / "data/labels" / j)]
             run([sys.executable, "-m", "fib_rf_seg", "train", *train, *shlex.split(a.recipe), "--model", str(model)])
-        img = next((ROOT / "data").glob(h + ".tif*"))
+        img = img_path(h)
         inp = d / "input"; inp.mkdir(parents=True, exist_ok=True)
-        link = inp / img.name
-        if not link.exists():
-            link.symlink_to(img)
+        if stack is not None and h.startswith("LCO70"):
+            from fib_rf_seg.io import list_slices
+            files = list_slices(stack)
+            i = [f.name for f in files].index(img.name)
+            sel = files[max(0, i - a.zwin): i + a.zwin + 1]
+        else:
+            sel = [img]
+        for f in sel:
+            if not (inp / f.name).exists():
+                (inp / f.name).symlink_to(f.resolve())
         run([sys.executable, "-m", "fib_rf_seg", "predict", "--model", str(model), "--input", str(inp), "--out", str(d),
              *shlex.split(a.post), "--crack-proba", "--overwrite"])
         run([sys.executable, "scripts/grow_cracks_3d.py", "--labels", str(d / "labels"), "--proba", str(d / "crack_proba"),
              "--out", str(d / "labels_3d"), "--low", str(a.low), "--min-length", str(a.min_length), "--raw", str(inp),
-             "--refine-width", "--no-stacks"])
+             *(["--refine-width"] if a.refine else []), "--no-stacks"])
         stem = img.stem
         lab2 = tifffile.imread(str(d / "labels" / f"{stem}_labels.tif"))
         lab3 = tifffile.imread(str(d / "labels_3d" / f"{stem}_labels.tif"))

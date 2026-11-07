@@ -21,7 +21,41 @@ SHAPE_MASKS = ((3, 0.02), (3, 0.05), (8, 0.05), (8, 0.15), (0, 0.0))
 RIDGE_MASKS = ((1.0, 0.7, 0.004), (2.0, 0.7, 0.002))   # (sigma, min anisotropy, min dark-line curvature)
 
 
-def feature_names(sigmas=DEFAULT_SIGMAS, oriented: bool = False, shape=False) -> list[str]:
+# z-context: dark-line maps of the neighbouring slices (cracks continue through z)
+ZMAPS = ("ridge1", "ridge2", "tophat3")
+ZAGGS = ("mean1", "mean2", "max2", "min1")
+
+
+def zmaps(im: np.ndarray, tol: int = 1) -> dict[str, np.ndarray]:
+    """Dark-line response maps of one normalised slice, for the z-context features of its neighbours:
+    largest Hessian eigenvalue at sigma 1 and 2 (positive on a dark line) and a black top-hat of radius 3,
+    each max-filtered over (2*tol+1)^2 px so that a crack shifted by a pixel or two between slices still
+    lines up."""
+    from skimage.morphology import closing, disk
+    im = im.astype(np.float32)
+    out = {}
+    for s, k in ((1.0, "ridge1"), (2.0, "ridge2")):
+        out[k] = hessian_matrix_eigvals(hessian_matrix(im, sigma=s, order="rc", use_gaussian_derivatives=False))[0]
+    g = ndi.gaussian_filter(im, 1.0)
+    out["tophat3"] = closing(g, disk(3)) - g
+    if tol > 0:
+        out = {k: ndi.maximum_filter(v, size=2 * tol + 1) for k, v in out.items()}
+    return {k: v.astype(np.float32) for k, v in out.items()}
+
+
+def zcontext_features(neigh: list[dict], k: int) -> list[np.ndarray]:
+    """neigh: zmaps of slices z-k..z-1, z+1..z+k (in that order, 2k dicts; missing ends repeated).
+    Per map: mean over z+-1, mean over z+-2 (all neighbours), max over all neighbours, and min over z+-1
+    (high only when the line is present on both sides of the slice)."""
+    feats = []
+    for m in ZMAPS:
+        a = np.stack([n[m] for n in neigh])            # (2k, H, W)
+        inner = a[[k - 1, k]]                           # z-1, z+1
+        feats += [inner.mean(0), a.mean(0), a.max(0), inner.min(0)]
+    return feats
+
+
+def feature_names(sigmas=DEFAULT_SIGMAS, oriented: bool = False, shape=False, zctx: int = 0) -> list[str]:
     names = ["intensity"]
     for s in sigmas:
         names += [f"gauss_{s}", f"gradmag_{s}", f"log_{s}", f"hess_max_{s}", f"hess_min_{s}", f"std_{s}"]
@@ -37,6 +71,8 @@ def feature_names(sigmas=DEFAULT_SIGMAS, oriented: bool = False, shape=False) ->
             names += [f"{tag}_aspect", f"{tag}_width", f"{tag}_logarea"]
         for sg, _, cm in RIDGE_MASKS:
             names += [f"ridge_s{sg:g}_c{cm:g}_aspect", f"ridge_s{sg:g}_c{cm:g}_width", f"ridge_s{sg:g}_c{cm:g}_logarea"]
+    if zctx:
+        names += ["tophat3"] + [f"z{zctx}_{m}_{a}" for m in ZMAPS for a in ZAGGS]
     return names
 
 
@@ -96,7 +132,8 @@ def shape_features(im: np.ndarray, ridge_only: bool = False) -> list[np.ndarray]
     return feats
 
 
-def compute_features(im: np.ndarray, sigmas=DEFAULT_SIGMAS, oriented: bool = False, shape=False) -> np.ndarray:
+def compute_features(im: np.ndarray, sigmas=DEFAULT_SIGMAS, oriented: bool = False, shape=False,
+                     zctx: int = 0, neigh: list[dict] | None = None) -> np.ndarray:
     """Return an (H, W, n_features) float32 array for a normalised 2-D image.
 
     ``oriented`` adds the row/column Hessian diagonal and the absolute row/column
@@ -104,7 +141,9 @@ def compute_features(im: np.ndarray, sigmas=DEFAULT_SIGMAS, oriented: bool = Fal
     (FIB curtaining) from inclined ones (cracks).  ``shape`` adds the object-shape
     features of :func:`shape_features` (aspect ratio and width of the dark object a
     pixel belongs to), so that cracks and pores, both dark, are told apart by shape;
-    ``shape="ridge"`` adds only the continuous ridge-anisotropy maps.
+    ``shape="ridge"`` adds only the continuous ridge-anisotropy maps.  ``zctx`` = k > 0 adds the slice's own
+    black top-hat and the z-context features of :func:`zcontext_features` from ``neigh`` (the
+    :func:`zmaps` of the k slices on each side).
     """
     im = im.astype(np.float32)
     feats = [im]
@@ -126,4 +165,9 @@ def compute_features(im: np.ndarray, sigmas=DEFAULT_SIGMAS, oriented: bool = Fal
         feats.append(gauss[a] - gauss[b])
     if shape:
         feats += shape_features(im, ridge_only=(shape == "ridge"))
+    if zctx:
+        if neigh is None or len(neigh) != 2 * zctx:
+            raise ValueError(f"zctx={zctx} needs the zmaps of {2 * zctx} neighbouring slices")
+        feats.append(zmaps(im, tol=0)["tophat3"])
+        feats += zcontext_features(neigh, zctx)
     return np.stack(feats, axis=-1).astype(np.float32)
