@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# Segment the LCO70 cycled stack (pore / LCO / LLZTO / crack) on the Mac with the crack model rf_cracks_v5,
+# Segment the LCO70 cycled stack (pore / LCO / LLZTO / crack) on the Mac with the crack model rf_cracks_v6,
 # with the same post-processing chain as LCO50 cycled: island removal < 6 px, crack shape filter
-# (--crack-min-length 12 --crack-min-aspect 3), 3D crack growth (scripts/grow_cracks_3d.py, LOW = 0.2).
+# (--crack-min-length 12 --crack-min-aspect 3), 3D crack growth (scripts/grow_cracks_3d.py, LOW = 0.15).
+# rf_cracks_v6: v3 recipe + --ignore-unmarked 0.2 on the three annotated LCO70 cycled slices (conservative);
+# MODEL=models/rf_cracks_v6_all.joblib adds the four LCO50 slices (finds more cracks, more false alarms in the
+# fine-particle regions and at LLZTO).  Leave-one-slice-out, full 3D chain: share of the annotated crack found
+# 0.91 (old recipe) -> 0.95 (v6) / 0.98 (v6_all); crack pixels per slice 1740 -> 2600 / 5570.
+# LOW = 0.2 reproduces the earlier growth threshold.
 #   conda activate fibseg && bash scripts/segment_lco70_cycled.sh [INPUT_DIR] [OUTPUT_DIR]
 # Destriping, smoothing and phase normalisation are stored in the model and applied automatically.
 # Output layout as in scripts/segment_lco50_cycled.sh (labels/ = per-slice model, labels_3d/ = grown cracks,
@@ -18,7 +23,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 IN="${1:-/Users/jehad/Desktop/work/PlasmaFIB_Data/A970_7030_cycled/try2/Dataset 2/Merged_clean}"
 OUT="${2:-/Users/jehad/Desktop/work/PlasmaFIB_Data/A970_7030_cycled/try2/Dataset 2/Merged_clean_segmented}"
-MODEL="${MODEL:-models/rf_cracks_v5.joblib}"
+MODEL="${MODEL:-models/rf_cracks_v6.joblib}"
 if [ -n "${SLICES:-}" ]; then
     read -r FIRST LAST <<< "$SLICES"
     [ $# -lt 2 ] && OUT="${OUT}_slices${FIRST}-${LAST}"
@@ -47,8 +52,8 @@ EOF
     IN="$SUB"
 fi
 OW="--overwrite"; [ "${RESUME:-0}" = "1" ] && OW=""
-echo "== model: $MODEL; growth threshold: ${LOW:-0.2}; output: $OUT"
+echo "== model: $MODEL; growth threshold: ${LOW:-0.15}; output: $OUT"
 python -m fib_rf_seg predict --model "$MODEL" --input "$IN" --out "$OUT" \
     --min-size 6 --crack-min-length 12 --crack-min-aspect 3 --per-phase --stack --crack-proba $OW
-python scripts/grow_cracks_3d.py --labels "$OUT/labels" --proba "$OUT/crack_proba" --out "$OUT/labels_3d" --low "${LOW:-0.2}" --min-length "${MIN_LENGTH:-25}" --raw "$IN" $( [ "${REFINE_WIDTH:-1}" = "1" ] && echo --refine-width )
+python scripts/grow_cracks_3d.py --labels "$OUT/labels" --proba "$OUT/crack_proba" --out "$OUT/labels_3d" --low "${LOW:-0.15}" --min-length "${MIN_LENGTH:-25}" --raw "$IN" $( [ "${REFINE_WIDTH:-1}" = "1" ] && echo --refine-width )
 python scripts/overlay_stack.py --raw "$IN" --labels "$OUT/labels_3d" --out "$OUT/overlay_3d"

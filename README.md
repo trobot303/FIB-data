@@ -472,3 +472,25 @@ profiles, `LCO_cut_by_cracks_stack.tif` (255 = LCO cut off by cracks) and `lco_c
 (summary, depth profile, per-slice profile, map of the slice with most LCO cut off). Needs about 6 bytes per voxel
 (~4 GB for 600 x 1001 x 1001). Example on the three annotated LCO70 cycled slices (not consecutive, so only a demo):
 `docs/overlays/LCO70_cycled_3slice_lco_crack_connectivity.png`.
+
+### LCO70 cycled crack model v6 (`rf_cracks_v6`, `rf_cracks_v6_all`)
+
+Leave-one-slice-out on the three annotated LCO70 cycled slices, each predicted with its +-5 neighbours from
+`data/LCO70_cycled_stack/` (raw slices 0010-0045) and run through the full 3D chain
+(`scripts/eval_cracks_loso.py --stack data/LCO70_cycled_stack --train lco70`):
+
+| recipe (trained on LCO70 slices only) | annotated crack found | crack px / slice |
+|---|---|---|
+| A v3 recipe (growth 0.2) | 0.913 | 1740 |
+| B A + `--ignore-unmarked 0.2` | 0.942 | 2230 |
+| C A + `--zctx 2` | 0.891 | – |
+| D A + both | 0.910 | – |
+| B, growth 0.15 (= `rf_cracks_v6`) | 0.952 | 2600 |
+| B on all 7 annotated slices, growth 0.15 (= `rf_cracks_v6_all`) | 0.980 | 5570 |
+
+`--ignore-unmarked` leaves thin dark lines away from the strokes unlabelled instead of training them as LCO/pore
+(the strokes mark only some cracks; ~15k such px per slice). `--zctx K` (dark-line maps of the K neighbouring
+slices) gave no gain with two training slices. In 3D the 25 px length limit costs no annotated crack (12 px finds
+the same). `rf_cracks_v6_all` finds more cracks but also false alarms in the fine-particle regions and at LLZTO.
+The annotations are incomplete, so the false-alarm rate is not measured; complete annotations of a few regions
+are the next step. `scripts/segment_lco70_cycled.sh` now defaults to `rf_cracks_v6` and growth 0.15.
