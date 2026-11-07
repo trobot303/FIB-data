@@ -457,3 +457,18 @@ field 109 x 46 um; the 1001 x 1001 px crop is 50 x 50 um. LCO50 cycled ds_2 (A97
 isotropic, crop 20 x 20 um. LCO70 cycled: 20 nm pixels, 50 nm slices. The pixel-based noise filters (6 px islands, 12 px
 line filter, width refinement) stay in pixels; the crack length limit is kept at 0.5 um in all samples (10 px for ds_1,
 25 px for ds_2 and LCO70). `crack_stats.py` takes `--px-um 0.05` for ds_1.
+
+### LCO connectivity in y: cracks as void vs cracks filled (`scripts/lco_crack_connectivity.py`)
+
+```bash
+python scripts/lco_crack_connectivity.py <segmented folder> --tag 3d --collector top --px-um 0.02
+```
+
+Reads `labels_3d_stack.tif` (`--tag ""` for `labels_stack.tif`), labels the LCO network twice (6-connectivity) — LCO
+alone (cracks interrupt it) and LCO + cracks (as if uncracked) — and reports both over the same LCO voxels, so the
+difference is exactly the LCO the cracks disconnect from the collector. Outputs next to the stack:
+`lco_crack_connectivity.json` (connected / percolating fraction, clusters, the drop), `_y.csv` and `_z.csv`
+profiles, `LCO_cut_by_cracks_stack.tif` (255 = LCO cut off by cracks) and `lco_crack_connectivity.png`
+(summary, depth profile, per-slice profile, map of the slice with most LCO cut off). Needs about 6 bytes per voxel
+(~4 GB for 600 x 1001 x 1001). Example on the three annotated LCO70 cycled slices (not consecutive, so only a demo):
+`docs/overlays/LCO70_cycled_3slice_lco_crack_connectivity.png`.
