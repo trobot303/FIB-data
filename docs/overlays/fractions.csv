@@ -1,0 +1,10 @@
+sample,slice,model,pore,LCO,LLZTO
+LCO60,LCO60_Processed001,rf_lco60.joblib,0.2935,0.4262,0.2803
+LCO60,LCO60_Processed451,rf_lco60.joblib,0.2869,0.4144,0.2987
+LCO60,LCO60_Processed564,rf_lco60.joblib,0.3108,0.4040,0.2851
+LCO60,LCO60_Processed632,rf_lco60.joblib,0.2943,0.4113,0.2944
+stackB,slice_0011,rf_lco60.joblib,0.2133,0.4406,0.3462
+LCO60_2,slice-4,rf_lco60.joblib,0.2293,0.4861,0.2846
+LCO70,LCO70_001,rf_all.joblib,0.1949,0.5798,0.2253
+LCO70,LCO70_075,rf_all.joblib,0.1960,0.5877,0.2163
+LCO70,LCO70_125,rf_all.joblib,0.2097,0.5641,0.2262

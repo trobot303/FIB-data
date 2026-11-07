@@ -148,7 +148,140 @@ and 0.875, which makes the model independent of the stack's contrast and of
 drift along z.  With these options the committed model agrees on 98.4 % of
 pixels with a model trained on this slice itself (`docs/LCO60_2_slice-4_overlay.png`):
 pore 22.9 %, LCO 48.6 %, LLZTO 28.5 % in the crop.  `scripts\\segment_lco60_2_stack.bat`
-runs it; set its `INPUT` path first.
+runs it on `...\\FIB data\\processed_LCO60_2`.
+
+### LCO70: small LLZTO particles, and the combined model `rf_all`
+
+The LCO70 slices (`data/LCO70/`, already cropped to 1700×700, HistBal-Gauss-
+Kuwahara processed, same grey scale as LCO60) contain many LLZTO particles of
+only 3–8 px.  The LCO60 model labelled about half of them LCO.  The cause was
+in the training-label generation: auto-seeds were eroded by 3 px, so objects
+smaller than ~7 px never received a seed and the watershed flooded them with
+the surrounding phase, teaching the forest "small bright blob = LCO".
+`auto_seeds` now keeps small connected cores whole (`keep_small`, default
+200 px), which raises the share of small bright blobs labelled LLZTO on LCO70
+from 0.45 to 0.90.
+
+`models/rf_all.joblib` is trained with the fixed seeds on the four LCO60 and
+the three LCO70 slices (`--norm phase --smooth 1.0`, 120 trees, depth 14,
+OOB 0.985).  It is the model to use for LCO70 (`scripts\\segment_lco70_stack.bat`)
+and for any future stack.  On LCO60 it agrees with `rf_lco60` on 95.6 % of
+pixels; the difference is mostly the recovered small particles and a slightly
+tighter LLZTO edge.
+
+| LCO70 slice | pore | LCO | LLZTO |
+|------------:|-----:|----:|------:|
+| 001 | 19.5 % | 58.0 % | 22.5 % |
+| 075 | 19.6 % | 58.8 % | 21.6 % |
+| 125 | 21.0 % | 56.4 % | 22.6 % |
+
+See `docs/overlay_LCO70_rf_all.png`.  Because LCO70's LLZTO grains are small,
+the LLZTO fraction is very sensitive to the edge convention: `--solid-level
+auto` (edge exactly at the multi-Otsu threshold, about one pixel further in)
+gives 18–19 % instead of 22 %.  Use the same convention for every sample you
+compare.
+
+Note on earlier models: a bug in `train` (one `--scribbles` file given with
+several `--image` files truncated the image list) meant `rf_v4`/`rf_lco60`
+were in fact trained on slice 001 only.  Fixed; the results on LCO60 were
+still fine because the slices are alike.
+
+## Cracks in cycled samples (class 4)
+
+`fib_rf_seg` has a fourth class, `4 = crack`, for cycled electrodes (thin dark
+lines through and between the LCO grains).  Cracks cannot be seeded
+automatically with enough reliability (a black top-hat finds grain-edge
+shadows as readily as cracks), so they are trained from scribbles drawn with
+`python -m fib_rf_seg.label` (key `4`) or supplied as a JSON file.  For a crack
+model use
+
+```bash
+python -m fib_rf_seg train --image data/LCO70_cycled/slice-0015.tif \
+    --scribbles data/labels/LCO70_cycled_slice-0015_cracks.json \
+    --auto-seeds --dense --norm phase --smooth 0.7 --destripe --class-weight 4 \
+    --max-per-class 25000 --model models/rf_cracks_v1.joblib
+```
+
+* `--destripe` removes the vertical FIB curtaining (column offsets that survive
+  a long smoothing along the rows); without it the dark stripes are confused
+  with cracks.  The flag is stored in the model and applied by `predict`.
+* `--auto-seeds --dense` label pore / LCO / LLZTO everywhere by watershed;
+  crack scribbles are then painted on top 1 px wide with a 3 px unlabelled rim.
+* `--class-weight 4` gives the (rare) crack class a fixed weight; the default
+  `balanced` makes the forest call every dark stripe and grain rim a crack.
+
+`rf_cracks_v1` was trained on two verified cracks of slice-0015 (0.4 % crack
+area); see `docs/overlays/LCO70_cycled_slice-0015_cracks_v1.png`.  It finds the
+prominent cracks but misses faint ones; more scribbles on several slices are
+needed for a production model.
+
+## Cropping segmented volumes to a common size
+
+All stacks share a 50 nm isotropic voxel, but LCO60_2 has fewer slices than
+LCO70 and LCO50.  `fib_rf_seg.cropvol` trims the *segmented* output folders
+to one size without resampling:
+
+```bash
+python -m fib_rf_seg.cropvol report  OUT_LCO60_2 OUT_LCO70 OUT_LCO50        # sizes in voxels and um
+python -m fib_rf_seg.cropvol crop    OUT_LCO70 OUT_LCO50 --match OUT_LCO60_2 --z-anchor start --stack
+```
+
+`--match` takes Z (slices), Y and X from the reference folder; `--size Z Y X`
+sets them directly.  `--z-anchor start|center|end` or `--z-start N` chooses
+which slices to keep; the x/y window is cut from the centre of each slice
+(`--xy-anchor start` for the top-left corner).  Each input gets a
+`<folder>_cropped` twin with the same layout (`labels/`, `pore/`, `LCO/`,
+`LLZTO/`, `fractions.csv`, optional phase stacks) plus `crop_info.json`
+recording the offsets.  `scripts\\crop_volumes_to_LCO60_2.bat` runs this for
+the three samples.
+
+## Running the 3D analysis (cathode_analysis) in the cloud
+
+`cathode_pipeline/` is the `cathode_analysis` workstation package (v2).  It can
+run in a Claude cloud session (4 cores, 15 GB RAM, no GPU) on the
+random-forest segmentations.  Only PyPI and GitHub are reachable from the
+session, so the data travel through the repository:
+
+1. **On the workstation**, after `predict --stack` (and `cropvol crop --stack`
+   for the volumes trimmed to the LCO60_2 size), run
+   `scripts\\push_label_stacks.bat`.  It copies `labels_stack.tif` of the four
+   samples from `...\\FIB data\\segmented\\` into `data/segmented/<sample>/`
+   and pushes them (zlib-compressed label volumes, roughly 50–60 MB per
+   700-slice sample).
+2. **In the session**: `bash scripts/setup_cloud_pipeline.sh` builds the
+   virtual environment (`cathode_pipeline/requirements_cloud.txt`; the pinned
+   `requirements.txt` is for Python 3.10–3.12 on the workstation) and runs the
+   50 pipeline tests.  Then, per sample,
+   `python scripts/labels_to_masks.py data/segmented/<sample>/labels_stack.tif`
+   writes the `pores.tiff` / `LCO.tiff` / `LLZTO.tiff` mask stacks the mask
+   mode expects, and
+
+   ```bash
+   cd cathode_pipeline && . .venv/bin/activate
+   python -m cathode_analysis.cli validate --config config/cloud_segmented.yaml
+   python -m cathode_analysis.cli run      --config config/cloud_segmented.yaml --stage all
+   ```
+
+   `config/cloud_segmented.yaml` is `workstation_segmented.yaml` with the four
+   samples, `device: cpu`, `n_workers: 4` and `tortuosity.downsample: 4`;
+   set `analysis_volume.shape_zyx` and the sample crops to the common volume
+   before running.  Results land in `results_pipeline/` (summary tables,
+   per-sample JSON/CSV, figures) and are committed back to the repository.
+
+Verified in the session: all 50 tests pass; a 3-slice LCO70 volume runs
+through every stage in under 2 minutes.
+
+### Tortuosity at full resolution
+
+`cathode_pipeline\run_tortuosity_full.bat` re-runs only the tortuosity stage
+with `tortuosity.downsample: 1` (50 nm voxels) and no wall-time limit, keeps
+the earlier result as `tortuosity_downsampled.json`, then refreshes the report.
+Cost measured with taufactor on CPU: 16 B per voxel and 1.8 s per iteration
+per 71 Mvoxel on 4 threads, so a 700 x 700 x 1700 volume needs about 14 GB
+and roughly 20 s per iteration on CPU; with the tens of thousands of
+iterations a 700-voxel-long path needs, that is days per phase on CPU and
+hours on a GPU.  `downsample: 2` (100 nm) costs 1/8 of the memory and about
+1/30 of the time and changes tau by a few percent.
 
 ## Running on the LCO60 stack (Windows)
 
@@ -216,3 +349,111 @@ edges at the multi-Otsu level (29 %); v4 = v3 retrained on four slices with
 fixed grey bounds.  Only `rf_lco60.joblib` is committed; the train command
 above (with `--trees 100 --max-depth 14` for the compact one) reproduces the
 models deterministically (`random_state=0`).
+
+## Preprocessing (BSE/SE merge, FFT curtaining removal)
+
+Jehad's preprocessing scripts live in `preprocessing/` (`merge_bse_se.py`, `remove_curtaining.py`,
+`select_fft_filter.py`, hand-picked `fft_mask.npy` for 1001×1001 px slices).
+`scripts/preprocess_lco50_cycled.sh` runs them on the LCO50 cycled BSE stack on the Mac
+(`ds_1_BSE` → `ds_1_BSE_clean`); pass a registered SE folder as 2nd argument to blend first.
+Example before/after: `docs/overlays/preprocess_lco50_cycled_slice001.png`.
+
+Crack post-processing options of `predict`/`review`: `--drop-vertical DEG` (vertical streaks → surrounding
+phase), `--crack-min-length PX` and `--crack-min-aspect RATIO` (drop dot-like crack components; e.g. 12 and 3
+for the heavily curtained LCO50 cycled data, `scripts/segment_lco50_cycled.sh`).
+`scripts/overlay_stack.py --raw <slices> --labels <labels> --out <folder>` writes an RGB overlay stack
+(`overlay_stack.tif`, one page per slice, cracks in red) plus per-slice overlay TIFFs; `--phases all`
+colours all phases, `--scale-bar` adds a bar. `scripts/segment_lco50_cycled.sh` runs it at the end.
+
+### LCO50 cycled crack model
+
+`models/rf_cracks_lco50_v2.joblib` (v1: slices 262/272 only): trained on the FFT-cleaned LCO50 cycled slices 045, 053, 262 and 272
+(`data/LCO50_cycled/`, red crack annotations converted with `annotation_to_scribbles` to
+`data/labels/LCO50_cycled_slice-2xx_cracks_user.json`) together with the three annotated LCO70 cycled
+slices, same recipe as rf_cracks_v5 (`--auto-seeds --dense --pore-level auto --norm phase --smooth 0.7
+--destripe --class-weight 4 --max-per-class 20000 --trees 200 --max-depth 16 --oriented
+--curtaining-negatives`). Used by `scripts/segment_lco50_cycled.sh` without `--drop-vertical` (the
+sample has near-vertical cracks) and with the dot filter `--crack-min-length 12 --crack-min-aspect 3`.
+Comparison with rf_cracks_v5: `docs/overlays/LCO50_cycled_model_comparison.png`.
+
+**Crack growth in 3D** (`scripts/grow_cracks_3d.py`): the per-pixel classifier finds a crack only on
+its clearest parts and may miss it in the next slice. `predict --crack-proba` writes the crack
+probability per slice (`crack_proba/<stem>_crackp.tif`, uint8); the growth script then adds every voxel
+with probability > `--low` (0.2) that is 26-connected in 3D to a detected crack, so cracks are completed
+along their length and propagate through neighbouring slices, while isolated low-probability pixels
+(curtaining) are not added. Output `labels_3d/`, `labels_3d_stack.tif`, `<phase>_3d_stack.tif`,
+`fractions_3d.csv`. `scripts/segment_lco50_cycled.sh` runs it (LOW=0.15 for more growth) and writes
+both overlay stacks (`overlay/overlay_stack.tif` per-slice, `overlay_3d/overlay_stack.tif` grown).
+Example: `docs/overlays/LCO50_cycled_crack_growth.png`.
+
+**Common post-processing for the cycled samples (reviewer point).** LCO70 cycled was first segmented with
+island removal only (labels_v2); LCO50 cycled with the crack shape filter and 3D growth. Both LCO70 scripts
+(`scripts/segment_lco70_cycled.sh`, `scripts/segment_aligned_blocks.sh`, output `labels_v3` / `labels_v3_3d`)
+now use the same chain as LCO50: `--min-size 6 --crack-min-length 12 --crack-min-aspect 3`, no
+`--drop-vertical`, then `grow_cracks_3d.py --low 0.2`. Per-phase stacks written with a label subfolder
+other than `labels` are named `<phase>_<subfolder>_stack.tif`.
+
+### LCO50 cycled: full analysis (`scripts/analyse_lco50_cycled.sh`)
+
+Same analysis as for LCO70 cycled, with the LCO50 model: segmentation + common post-processing + 3D crack
+growth + overlay stacks (`segment_lco50_cycled.sh`), y-connectivity of LCO (cracks as void / filled) and
+LLZTO (`connectivity_y.py --tag 3d`), dimetric 3D rendering (`render_cracks_3d.py --tag 3d`), optional
+y-tortuosity (`TORTUOSITY=1`). `--tag 3d` makes these scripts read the grown-crack stacks
+`<phase>_3d_stack.tif` (use `--tag v3_3d` for the LCO70 aligned blocks). Set `VOXEL="x y z"` (um) to the
+real voxel size of the dataset (LCO50 cycled ds_1: 50 nm isotropic per dataset_info.hdr, default; ds_2: 20 nm isotropic) and `COLLECTOR=top|bottom`.
+
+`scripts/crop_slices.py --in <folder> --out <folder> --size 1001 1001 [--anchor center | --origin Y0 X0] [--z Z0 Z1] [--dry-run] [--preview p.png]`
+crops raw slices to a fixed size (e.g. LCO50 cycled ds_2 to the 1001 x 1001 px of LCO70 cycled) before segmentation.
+
+**Crack length limit** (`grow_cracks_3d.py --min-length PX`, default 25 px = 0.5 um in the cycled scripts,
+`MIN_LENGTH=...` to change): after the 3D growth, crack components whose longest in-plane piece is shorter
+than the limit are removed (dark spots at particle contacts, curtaining bits); a short piece that belongs to
+a crack that is long in another slice is kept. On the four annotated LCO50 slices 25 px keeps 97 % of the
+annotated crack area and removes 81 % of the unmarked short detections. Applied to LCO50 and LCO70 alike.
+
+### LCO50 cycled ds_2 crack model and crack width refinement
+
+`models/rf_cracks_lco50_ds2_v1.joblib`: for the BSE/SE-merged ds_2 stack, whose cracks are ~2 px wide and only
+~8 % of the LCO-pore grey step deep. Trained on the annotated ds_2 slice 0364 (`data/LCO50_cycled_ds2/`, strokes
+converted with `annotation_to_scribbles(..., snap=0)`, i.e. as drawn) plus the four annotated ds_1 slices, same
+recipe as the other crack models but `--class-weight 8`. Two-fold spatial cross-validation on slice 0364
+(train on one half, test on the other): weight 8 finds 61-69 % of the annotated crack pixels after growth vs
+53-55 % for weight 4; the ds_1 model finds almost none. Run: `scripts/analyse_lco50_cycled_ds2.sh`.
+
+**Width refinement** (`grow_cracks_3d.py --raw <slices> --refine-width`, default in all cycled scripts,
+`REFINE_WIDTH=0` to switch off): the classifier marks a 5-7 px band around a 2 px crack. After growth and the
+length limit, each crack is trimmed to the pixels at least half as dark (black top-hat, disk radius 4 px) as the
+darkest crack pixel within 3 px, i.e. the full width at half depth, plus the centre line. Mean width on ds_2:
+7 px -> 2.1 px; on ds_1: 4.4 px -> ~3 px. Applied to LCO50 ds_1, ds_2 and LCO70 alike.
+
+**Crack statistics** (`scripts/crack_stats.py NAME=<segmented folder> ... [--labels labels_3d] [--z-um ...]`):
+phase fractions, host phase of the cracks (nearest non-crack phase), cracked fraction of LCO and LLZTO,
+crack length density (um/um^2), mean crack width (nm), and 3D crack objects per 1000 um^3, side by side.
+
+### ds_1 model v3 and the leave-one-slice-out test
+
+`models/rf_cracks_lco50_v3.joblib` (default of `segment_lco50_cycled.sh`): same training data and recipe as v2
+plus `--shape ridge` (three continuous ridge-anisotropy maps). Chosen by a leave-one-slice-out test on the
+four annotated ds_1 slices (train on three + LCO70 slices, test on the fourth, full chain incl. growth,
+25 px length limit and width refinement; score = share of the annotated crack pixels found within 2 px, and
+crack pixels farther than 4 px from any stroke):
+
+| variant | recall | outside px |
+|---|---|---|
+| A v2 recipe | 56 % | 217 |
+| B strokes as drawn (no snapping) | 56 % | 404 |
+| C B + crack weight 8 | 58 % | 538 |
+| D C + full shape features | 48 % | 460 |
+| E A + full shape features | 38 % | 65 |
+| F A + ridge anisotropy only (= v3) | 57 % | 154 |
+
+The object-based shape features (aspect ratio / width / size of the dark object a pixel belongs to,
+`--shape`) make the model stricter and blind to faint cracks; the continuous ridge-anisotropy maps keep the
+recall and remove ~30 % of the pixels outside the annotations. Slice 272 (cracks in the large LLZTO particle)
+is the hardest held-out case (~32 %) because the other slices hold almost no LLZTO cracks.
+
+**Voxel sizes of the cycled samples.** LCO50 cycled ds_1 (A970_5to5_cycled dynamic_1): 50 nm pixels, 50 nm slices,
+field 109 x 46 um; the 1001 x 1001 px crop is 50 x 50 um. LCO50 cycled ds_2 (A970_5050_cycled try3 Dataset 1): 20 nm
+isotropic, crop 20 x 20 um. LCO70 cycled: 20 nm pixels, 50 nm slices. The pixel-based noise filters (6 px islands, 12 px
+line filter, width refinement) stay in pixels; the crack length limit is kept at 0.5 um in all samples (10 px for ds_1,
+25 px for ds_2 and LCO70). `crack_stats.py` takes `--px-um 0.05` for ds_1.

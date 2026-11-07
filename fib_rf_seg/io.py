@@ -69,6 +69,19 @@ def normalise_phases(im: np.ndarray, smooth: float = 1.0, anchors: dict | None =
     return np.clip(out, 0.0, 1.0).astype(np.float32)
 
 
+def destripe(im: np.ndarray, sigma_y: float = 40.0, sigma_x: float = 25.0) -> np.ndarray:
+    """Remove vertical FIB curtaining stripes.
+
+    The stripe pattern is estimated as the column-wise offset that survives a
+    long smoothing along the rows (sigma_y) but not across the columns
+    (sigma_x), and subtracted.  Fine structure is untouched.
+    """
+    from scipy import ndimage as ndi
+    s = ndi.gaussian_filter1d(im.astype(np.float32), sigma_y, axis=0)
+    stripe = s - ndi.gaussian_filter1d(s, sigma_x, axis=1)
+    return (im - stripe).astype(np.float32)
+
+
 def crop(im: np.ndarray, box) -> np.ndarray:
     """Crop to (y0, y1, x0, x1); None leaves the image unchanged."""
     if box is None:

@@ -1,0 +1,210 @@
+# =============================================================================
+# cathode_analysis - default configuration
+#
+# Every path, threshold and parameter of the pipeline lives here. Nothing is
+# hard-coded in the package. Copy this file, edit it, and pass it with
+#   python -m cathode_analysis.cli run --config my_config.yaml --stage all
+#
+# Conventions
+#   * Relative paths in `paths` are resolved against the directory that
+#     contains this YAML file. Sample `input_dir` is resolved against
+#     `paths.data_root`; all outputs go below `paths.output_root/<sample>/`.
+#   * Arrays are stored in (z, y, x) order: z = slice index (FIB milling
+#     direction), y = image rows, x = image columns.
+#   * Phase label codes (uint8) are fixed:  0 = pore, 1 = LCO, 2 = LLZTO.
+#   * `null` means "not set / use whole range / auto".
+# =============================================================================
+
+schema_version: 1
+
+project:
+  name: lco_llzto_composite_cathodes
+  description: "3D microstructure analysis of LCO/LLZTO composite cathodes (Clausnitzer et al. 2023)"
+
+paths:
+  data_root: "../.."              # folder that holds processed_LCO50/60/70
+  output_root: "../results"        # one sub-folder per sample is created here
+  log_dir: "../results/logs"        # one log file per run
+
+runtime:
+  log_level: INFO                 # DEBUG | INFO | WARNING
+  n_workers: 4                    # CPU threads for parallel per-slice work
+  device: auto                    # auto | cpu | cuda  (torch / taufactor)
+  memory_log: true                # log peak RSS per stage
+  label_format: npy               # npy | tif   (npy is memory-mappable)
+  random_seed: 0
+
+voxel:
+  size_nm: 50.0                   # isotropic voxel edge length
+  # Cell layout: current collector | composite cathode (imaged) | LLZTO separator | counter electrode.
+  # Only the composite cathode is in the image. Assumed: image rows (y) run from the
+  # current-collector side (top, y_min) to the separator side (bottom, y_max).
+  through_thickness_axis: y       # x | y | z - direction from current collector to separator
+  current_collector_face: min     # min | max - which end of that axis touches the current collector
+
+# -----------------------------------------------------------------------------
+# Samples. Each sample is a folder of 2D TIFF slices OR a single multipage TIFF.
+# `pattern` is a glob relative to `input_dir`; files are sorted by the trailing
+# integer in the file name (natural sort). If the pattern matches exactly one
+# file with more than one page, it is read as a multipage stack.
+# -----------------------------------------------------------------------------
+samples:
+  - name: LCO50
+    nominal_lco_vol_fraction: 0.50
+    input_dir: processed_LCO50
+    pattern: "slice_*.tif"
+    slice_range: [null, null]     # [first, last) slice indices after sorting; null = all
+    crop:                         # voxel index ranges applied at load time; null = full extent
+      z: [null, null]
+      y: [null, null]
+      x: [null, null]
+    downsample: 1                 # integer block-average factor (2 = 100 nm voxels, 8x less memory)
+    overrides: {}                 # per-sample override of any section, e.g. {segmentation: {thresholds: {method: manual, manual: [70, 160]}}}
+
+  - name: LCO60
+    nominal_lco_vol_fraction: 0.60
+    input_dir: processed_LCO60
+    pattern: "*Kuwahara*.tiff"
+    slice_range: [null, null]
+    crop: {z: [null, null], y: [null, null], x: [null, null]}
+    downsample: 1
+    overrides: {}
+
+  - name: LCO70
+    nominal_lco_vol_fraction: 0.70
+    input_dir: processed_LCO70
+    pattern: "*Kuwahara*.tiff"
+    slice_range: [null, null]
+    crop: {z: [null, null], y: [null, null], x: [null, null]}
+    downsample: 1
+    overrides: {}
+
+# -----------------------------------------------------------------------------
+# Stage: segment -> <sample>/labels.npy, <sample>/segment.json, QC PNGs
+# -----------------------------------------------------------------------------
+segmentation:
+  normalize:
+    method: percentile            # none | percentile | minmax
+    percentiles: [0.1, 99.9]      # clip range before rescaling uint16 -> uint8
+    per_slice: false              # rescale each slice separately (true) or the whole stack (false)
+  preprocess:
+    filter: none                  # none | gaussian | median  (input is already Kuwahara filtered)
+    sigma: 1.0                    # gaussian sigma in voxels
+    size: 3                       # median footprint in voxels
+    in_3d: true                   # filter the volume in 3D rather than slice by slice
+  thresholds:
+    method: multi_otsu            # multi_otsu | manual | kmeans
+    n_classes: 3
+    manual: [null, null]          # two grey-level thresholds on the uint8 scale when method = manual
+    histogram_subsample: 8        # use every n-th voxel to estimate thresholds (memory)
+  # Which grey-level class (darkest -> brightest) belongs to which phase.
+  # BSE contrast: pores darkest; the LCO vs LLZTO order must be verified on the data.
+  intensity_order: [pore, lco, llzto]
+  postprocess:
+    min_object_voxels: {pore: 27, lco: 125, llzto: 125}   # remove smaller islands per phase
+    fill_holes:                   # fill pore cavities fully enclosed by LCO / LLZTO
+      enabled: true
+      max_voxels: 1000            # only cavities up to this size (segmentation noise), larger closed pores are kept
+    majority_filter_radius: 0     # 0 = off; >0 applies a 3D majority vote with that radius
+    chunk_z: 128                  # z-chunk size for labelling-based clean-up (bounds int32 temporaries)
+    chunk_margin: 16              # overlap between chunks; islands/holes larger than this may cross chunks
+  qc:
+    overlay_slices: [0.25, 0.5, 0.75]   # fractions along z at which overlay PNGs are saved
+    save_histogram: true
+
+# -----------------------------------------------------------------------------
+# Stage: connectivity -> <sample>/connectivity.json, <sample>/labels_connected.npy
+# A cluster of a phase is "connected" if it touches the reference face(s) listed
+# for that phase. Faces are named <axis>_<min|max>, e.g. y_min. `collector` and
+# `separator` are aliases resolved from voxel.through_thickness_axis and
+# voxel.current_collector_face.
+# -----------------------------------------------------------------------------
+connectivity:
+  structure: 6                    # 6 | 18 | 26 neighbourhood
+  reference_faces:
+    lco:   [collector]            # electronic percolation path
+    llzto: [separator]            # ionic percolation path
+    pore:  [collector, separator] # open vs closed porosity
+  report_largest_n_clusters: 10
+  save_connected_labels: true     # write labels_connected.npy (isolated voxels relabelled to codes 3-5)
+
+# -----------------------------------------------------------------------------
+# Stage: surface -> <sample>/surface.json
+# -----------------------------------------------------------------------------
+surface:
+  method: marching_cubes          # marching_cubes | voxel_faces
+  marching_cubes:
+    smoothing_sigma: 0.7          # gaussian sigma applied to the binary mask before meshing
+    step_size: 1
+  voxel_faces:
+    correction_factor: 0.667      # empirical factor for the staircase over-estimate (~2/3)
+  interfaces:                     # pairs to measure: total and "active" (both sides connected)
+    - [lco, llzto]
+    - [lco, pore]
+    - [llzto, pore]
+  active_requires_connected: true
+  chunk_z: 64                     # z-chunk size for marching cubes (float32 temporaries per chunk)
+
+# -----------------------------------------------------------------------------
+# Stage: tortuosity -> <sample>/tortuosity.json
+# -----------------------------------------------------------------------------
+tortuosity:
+  backend: taufactor              # taufactor | porespy
+  phases: [lco, llzto]            # LCO -> electronic path, LLZTO -> ionic path
+  directions: [x, y, z]           # each direction is solved separately
+  use_connected_only: true        # solve on the percolating cluster only
+  taufactor:
+    convergence: 0.02             # taufactor conv_crit
+    max_iterations: 20000
+    check_every: 100
+  porespy:
+    solver_tol: 1.0e-6
+  downsample: 1                   # integer block factor (1 = full resolution)
+
+# -----------------------------------------------------------------------------
+# Stage: grains -> <sample>/grains_<phase>.npy, <sample>/grains_<phase>.csv
+# SNOW-style watershed on the distance transform (porespy.filters.snow_partitioning).
+# -----------------------------------------------------------------------------
+grains:
+  phases: [lco, llzto]
+  method: snow                    # snow | watershed_hmax
+  snow:
+    sigma: 0.4                    # gaussian smoothing of the distance transform
+    r_max: 4                      # peak-finding radius in voxels
+  watershed_hmax:
+    h: 2.0                        # h-maxima suppression height in voxels
+  min_grain_voxels: 64
+  measure:
+    equivalent_diameter: true
+    sphericity: true
+    n_bins_size_distribution: 40
+  downsample: 1                   # block factor for the grain stage only (distance transform is 8 B/voxel)
+
+# -----------------------------------------------------------------------------
+# Stage: profiles -> <sample>/profiles.csv + plots
+# Quantities evaluated in slabs along voxel.through_thickness_axis.
+# -----------------------------------------------------------------------------
+profiles:
+  slab_thickness_um: 1.0          # slab width along the through-thickness axis
+  quantities: [volume_fraction, connected_fraction, interface_density, grain_count]
+  phases: [pore, lco, llzto]
+  normalize_position: true        # also report position as 0..1 (collector -> separator)
+
+# -----------------------------------------------------------------------------
+# Stage: report -> <output_root>/summary.csv, summary.json, figures/
+# -----------------------------------------------------------------------------
+report:
+  compare_with_nominal: true
+  reference_values_csv: null      # optional CSV with literature values to overlay
+  figures:
+    format: png                   # png | pdf | svg
+    dpi: 200
+    style: default                # any matplotlib style name
+  tables:
+    float_format: "%.4f"
+
+plotting:
+  colors: {pore: "#1f1f1f", lco: "#d95f02", llzto: "#1b9e77"}   # fixed phase identities
+  sample_colors: {LCO50: "#4477aa", LCO60: "#ee6677", LCO70: "#228833"}
+  interface_colors: {lco-llzto: "#7570b3", lco-pore: "#e6ab02", llzto-pore: "#66a61e"}
+  overlay_alpha: 0.45
