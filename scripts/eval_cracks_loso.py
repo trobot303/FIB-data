@@ -70,6 +70,7 @@ def main():
         name = h.replace("/", "_")
         d = out / name
         model = d / "model.joblib"
+        d.mkdir(parents=True, exist_ok=True)
         if not model.exists():
             train = []
             for k, j in ANNOTATED.items():
