@@ -21,6 +21,7 @@ Writes to <out> (default: the segmented folder):
   lco_crack_connectivity_z.csv     connected fraction per slice z (both cases)
   lco_crack_connectivity.png       figure: summary bars, depth profile, per-slice profile, map of one slice
   LCO_cut_by_cracks_stack.tif      255 = LCO cut off by cracks (open in Fiji next to the label stack)
+For a tag other than 3d / "" (e.g. 3d_infl20nm from scripts/inflate_cracks.py) the tag is added to every name.
 Memory: about 6 bytes per voxel (int32 cluster labels + masks), e.g. ~4 GB for 600 x 1001 x 1001.
 """
 import argparse
@@ -81,6 +82,8 @@ def main():
     out = Path(a.out) if a.out else d
     out.mkdir(parents=True, exist_ok=True)
     nz, ny, nx = lab.shape
+    sfx = "" if a.tag in ("3d", "") else f"_{a.tag}"           # e.g. _3d_infl20nm: one set of outputs per tag
+    pre = f"lco_crack_connectivity{sfx}"
     lco = lab == LCO
     crack = lab == CRACK
     print(f"{stack.name}: {nz} x {ny} x {nx} (z, y, x); collector at {a.collector}; "
@@ -111,21 +114,21 @@ def main():
     with np.errstate(invalid="ignore", divide="ignore"):
         py_v = conn_v.sum(axis=(0, 2)) / lco_y; py_f = conn_f.sum(axis=(0, 2)) / lco_y
         pz_v = conn_v.sum(axis=(1, 2)) / lco_z; pz_f = conn_f.sum(axis=(1, 2)) / lco_z
-    with open(out / "lco_crack_connectivity_y.csv", "w", newline="") as fh:
+    with open(out / f"{pre}_y.csv", "w", newline="") as fh:
         w = csv.writer(fh); w.writerow(["y_px", "y_um", "LCO_voxels", "connected_cracks_filled", "connected_cracks_as_void", "cut_off_by_cracks"])
         for y in range(ny):
             w.writerow([y, f"{y * a.px_um:.4f}" if a.px_um else "", int(lco_y[y]),
                         f"{py_f[y]:.5f}", f"{py_v[y]:.5f}", f"{py_f[y] - py_v[y]:.5f}"])
-    with open(out / "lco_crack_connectivity_z.csv", "w", newline="") as fh:
+    with open(out / f"{pre}_z.csv", "w", newline="") as fh:
         w = csv.writer(fh); w.writerow(["z", "LCO_voxels", "connected_cracks_filled", "connected_cracks_as_void", "cut_off_by_cracks"])
         for z in range(nz):
             w.writerow([z + (a.z[0] if a.z else 0), int(lco_z[z]), f"{pz_f[z]:.5f}", f"{pz_v[z]:.5f}", f"{pz_f[z] - pz_v[z]:.5f}"])
-    tifffile.imwrite(str(out / "LCO_cut_by_cracks_stack.tif"), (cut * 255).astype(np.uint8),
+    tifffile.imwrite(str(out / f"LCO_cut_by_cracks{sfx}_stack.tif"), (cut * 255).astype(np.uint8),
                      photometric="minisblack", bigtiff=cut.nbytes > 2**31)
 
     zs = a.slice if a.slice is not None else int(np.argmax(cut.sum(axis=(1, 2))))
     res["map_slice"] = zs + (a.z[0] if a.z else 0)
-    json.dump(res, open(out / "lco_crack_connectivity.json", "w"), indent=2)
+    json.dump(res, open(out / f"{pre}.json", "w"), indent=2)
 
     dif = res["difference"]
     print(f"{'':22s} {'connected':>10s} {'percolating':>12s} {'clusters':>9s}")
@@ -135,8 +138,8 @@ def main():
     print(f"LCO cut off from the collector by cracks: {100 * dif['LCO_cut_off_by_cracks_fraction']:.2f} % of all LCO "
           f"({100 * dif['connected_fraction_relative_drop']:.1f} % of the connected LCO)")
 
-    figure(out / "lco_crack_connectivity.png", res, py_f, py_v, pz_f, pz_v, lab[zs], conn_v[zs], conn_f[zs], a, zs)
-    print("wrote", out / "lco_crack_connectivity.json", "and the .png / .csv / LCO_cut_by_cracks_stack.tif next to it")
+    figure(out / f"{pre}.png", res, py_f, py_v, pz_f, pz_v, lab[zs], conn_v[zs], conn_f[zs], a, zs)
+    print("wrote", out / f"{pre}.json", f"and the .png / .csv / LCO_cut_by_cracks{sfx}_stack.tif next to it")
 
 
 def figure(path, res, py_f, py_v, pz_f, pz_v, lab2, cv2, cf2, a, zs):
