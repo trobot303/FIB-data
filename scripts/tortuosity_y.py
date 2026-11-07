@@ -64,6 +64,10 @@ def main():
     ap.add_argument("--z", type=int, nargs=2, default=None, metavar=("Z0", "Z1"))
     ap.add_argument("--tag", default="", help="use <phase>_<tag>_stack.tif (e.g. 3d for the grown cracks)")
     ap.add_argument("--phases", nargs="+", default=["lco", "llzto"], choices=("lco", "llzto"), help="which phases to solve (lco = both crack cases)")
+    ap.add_argument("--filled-ref", default=None, metavar="JSON",
+                    help="reuse LCO_cracks_filled from an earlier tortuosity_y.py result of the same volume and slice range "
+                         "instead of solving it again; used only if its volume fraction matches (true for the stacks of "
+                         "inflate_cracks.py / extend_cracks.py, which only turn LCO into crack)")
     a = ap.parse_args()
     import torch
     device = a.device
@@ -88,8 +92,17 @@ def main():
     if "llzto" in a.phases:
         cases["LLZTO"] = (llz, sep)
     res = {"folder": str(d), "shape_zyx": list(lco.shape), "downsample": a.downsample, "device": device, "direction": "y", "phases": {}}
+    ref = None
+    if a.filled_ref and "LCO_cracks_filled" in cases:
+        ref = json.load(open(a.filled_ref))["phases"].get("LCO_cracks_filled")
     for name, (mask, face) in cases.items():
         vf_full = float(mask.mean())
+        if name == "LCO_cracks_filled" and ref is not None:
+            if abs(ref["volume_fraction"] - vf_full) < 1e-6 and ref.get("converged"):
+                res["phases"][name] = dict(ref, note=f"reused from {a.filled_ref}")
+                print(f"{name}: vf {vf_full:.4f} matches {a.filled_ref}; reused tau={ref['tau']:.3f} eps/tau={ref['eps_over_tau']:.4f}")
+                continue
+            print(f"{name}: --filled-ref volume fraction {ref['volume_fraction']:.6f} != {vf_full:.6f}; solving instead")
         m = block_reduce(connected_part(mask, face), a.downsample)
         vf = float(m.mean())
         print(f"{name}: vf {vf_full:.4f} (connected, downsampled {vf:.4f}); solving ...")
