@@ -19,7 +19,24 @@ def list_slices(path: str | Path) -> list[Path]:
     if path.is_file():
         return [path]
     files = [p for p in path.iterdir() if p.suffix.lower() in (".tif", ".tiff")]
-    return sorted(files, key=_natural_key)
+    return sorted(stack_members(files), key=_natural_key)
+
+
+def stack_members(files: list[Path], verbose: bool = True) -> list[Path]:
+    """Keep only the files that follow the stack's naming pattern (the most common name with every digit run
+    replaced by '#', e.g. 'slice-#'); other TIFFs in the folder, such as 'slice-0022_annotated.tif', are skipped
+    so they do not become extra z-slices."""
+    groups: dict[str, list[Path]] = {}
+    for f in files:
+        groups.setdefault(re.sub(r"\d+", "#", f.stem), []).append(f)
+    if len(groups) <= 1:
+        return list(files)
+    main = max(groups, key=lambda k: len(groups[k]))
+    skipped = sorted((f for k, g in groups.items() if k != main for f in g), key=lambda f: f.name)
+    if verbose:
+        names = ", ".join(f.name for f in skipped[:6]) + (" ..." if len(skipped) > 6 else "")
+        print(f"[slices] {len(groups[main])} slices named like '{main}'; skipped {len(skipped)} other TIFF(s): {names}")
+    return groups[main]
 
 
 def read_slice(path: str | Path) -> np.ndarray:

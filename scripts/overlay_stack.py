@@ -27,7 +27,17 @@ def natural_key(p: Path):
 
 
 def list_tifs(d: Path):
-    return sorted([p for p in Path(d).iterdir() if p.suffix.lower() in (".tif", ".tiff")], key=natural_key)
+    """TIFF slices of a folder; files not named like the majority (e.g. slice-0022_annotated.tif) are skipped."""
+    files = [p for p in Path(d).iterdir() if p.suffix.lower() in (".tif", ".tiff")]
+    groups = {}
+    for f in files:
+        groups.setdefault(re.sub(r"\d+", "#", f.stem), []).append(f)
+    if len(groups) > 1:
+        main = max(groups, key=lambda k: len(groups[k]))
+        n = sum(len(g) for k, g in groups.items() if k != main)
+        print(f"[slices] skipped {n} TIFF(s) not named like '{main}' in {d}")
+        files = groups[main]
+    return sorted(files, key=natural_key)
 
 
 def grey_bounds(files, n=10):
