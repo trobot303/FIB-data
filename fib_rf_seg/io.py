@@ -69,6 +69,74 @@ def normalise_phases(im: np.ndarray, smooth: float = 1.0, anchors: dict | None =
     return np.clip(out, 0.0, 1.0).astype(np.float32)
 
 
+# Pixel size (nm) of the LCO60 training slices (TIFF resolution 200000 px/cm, and
+# the same grain sizes in px as the TESCAN stacks whose metadata say 50 nm).
+# Used for models saved before the pixel size was stored in the model file.
+DEFAULT_MODEL_PIXEL_NM = 50.0
+
+
+def read_pixel_size(path: str | Path) -> float | None:
+    """Return the in-plane pixel size of a slice in nm, or None if unknown.
+
+    Looks at, in order: the TESCAN metadata tag (``PixelSizeX`` in metres),
+    ImageJ's ``unit=`` + resolution tags, and the TIFF resolution tags with a
+    cm/inch unit.
+    """
+    import re
+    try:
+        with tifffile.TiffFile(str(path)) as tf:
+            page = tf.pages[0]
+            tags = page.tags
+            tescan = tags.get(50431)
+            if tescan is not None:
+                raw = tescan.value
+                txt = raw.decode("latin1", "ignore") if isinstance(raw, (bytes, bytearray)) else str(raw)
+                m = re.search(r"PixelSizeX=([0-9.eE+-]+)", txt)
+                if m and float(m.group(1)) > 0:
+                    return float(m.group(1)) * 1e9
+            xres = tags.get("XResolution")
+            if xres is None:
+                return None
+            num, den = xres.value if isinstance(xres.value, tuple) else (xres.value, 1)
+            px_per_unit = num / den if den else 0.0
+            if px_per_unit <= 0:
+                return None
+            desc = tags.get("ImageDescription")
+            if desc is not None and "ImageJ" in str(desc.value):
+                m = re.search(r"unit=(\S+)", str(desc.value))
+                unit_nm = {"nm": 1.0, "nanometer": 1.0, "micron": 1e3, "um": 1e3, "\\u00B5m": 1e3, "µm": 1e3,
+                           "mm": 1e6, "cm": 1e7}.get(m.group(1).strip() if m else "", None)
+                if unit_nm is not None:
+                    return unit_nm / px_per_unit
+            unit = tags.get("ResolutionUnit")
+            unit = int(unit.value) if unit is not None else 2
+            if unit == 3:      # centimetre
+                return 1e7 / px_per_unit
+            if unit == 2 and px_per_unit > 1000:   # inch; small values are just screen dpi
+                return 2.54e7 / px_per_unit
+    except Exception:
+        return None
+    return None
+
+
+def resample(im: np.ndarray, shape, order: int = 3) -> np.ndarray:
+    """Resize a 2-D float image to *shape* (anti-aliased when shrinking)."""
+    from skimage.transform import resize
+    if tuple(shape) == im.shape:
+        return im
+    shrink = shape[0] < im.shape[0] or shape[1] < im.shape[1]
+    return resize(im, shape, order=order, mode="edge", anti_aliasing=shrink,
+                  preserve_range=True).astype(np.float32)
+
+
+def resample_labels(lab: np.ndarray, shape, classes=(1, 2, 3)) -> np.ndarray:
+    """Resize a label image to *shape* by an area-weighted vote between classes."""
+    if tuple(shape) == lab.shape:
+        return lab
+    votes = np.stack([resample((lab == k).astype(np.float32), shape, order=1) for k in classes], axis=-1)
+    return np.asarray(classes, dtype=np.uint8)[np.argmax(votes, axis=-1)]
+
+
 def crop(im: np.ndarray, box) -> np.ndarray:
     """Crop to (y0, y1, x0, x1); None leaves the image unchanged."""
     if box is None:

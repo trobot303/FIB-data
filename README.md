@@ -128,8 +128,42 @@ A model retrained on that slice alone agrees with the LCO60 model on 97.6 % of
 pixels; the difference is a 1 px wider LLZTO edge in the retrained one.  See
 `docs/stackB_slice_0011_overlay.png`.  For a new stack, check that (a) the
 raw phase grey levels are similar (`--lo/--hi` otherwise) and (b) the pixel
-size is similar, since feature scales are in pixels; then inspect one review
+size is known (`--pixel-size`, see below); then inspect one review
 figure before running the whole volume.
+
+### Stacks with another pixel size (e.g. 100 nm)
+
+The committed model was trained at **50 nm/px**: the LCO60 training slices
+(TIFF resolution 200000 px/cm), LCO60_2 and stackB (TESCAN `PixelSizeX=5e-8`)
+are all 50 nm and show the same grain sizes in pixels (mean pore chord ≈ 16 px).
+Its features, `--band` and `--min-size` are therefore in 50 nm pixels, and a
+100 nm stack fed to it as-is looks like a stack of grains half the size.
+
+`predict` and `review` now take `--pixel-size NM` (default `auto`).  Each
+slice is normalised and cropped on its own grid, resampled to the model's
+pixel size (cubic), segmented there, and the labels are returned on the
+slice's own grid by an area-weighted vote, so outputs keep the input size
+(a 100 nm slice of 850×350 px gives 850×350 px labels).  `auto` reads the
+pixel size from the TESCAN metadata or the TIFF/ImageJ resolution tags;
+slices without either are assumed to match the model, with a warning, so
+pass the value explicitly for exported/processed stacks that lost it:
+
+```bash
+python -m fib_rf_seg predict --model models/rf_lco60.joblib --input /path/to/100nm_stack \
+    --out /path/to/100nm_stack_segmented --pixel-size 100 --pore-level auto --min-size 20 --per-phase --stack
+```
+
+`--crop` and `--smooth` stay in the slice's own pixels; `--min-size` and
+`--band` are in model (50 nm) pixels.  `train` records the pixel size in the
+model (`--pixel-size`, or read from the first `--image`); models saved before
+this are taken as 50 nm.
+
+Test (`docs/pixel_size_100nm_test.png`): slices 451 and 001 binned 2×2 to
+100 nm and segmented with `--pixel-size 100` agree on 99.3 % / 99.2 % of
+pixels with the native 50 nm segmentation voted down to 100 nm (pore / LCO /
+LLZTO 29.2 / 41.5 / 29.3 % vs 29.1 / 41.3 / 29.6 % on slice 451).  Fed to
+the model as if they were 50 nm, they agree on only 91.8 % / 91.6 %, with
+LLZTO over-estimated by 2–2.5 points.
 
 ### LCO60_2: a raw, uncropped stack with different contrast
 

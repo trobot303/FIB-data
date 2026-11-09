@@ -20,7 +20,8 @@ from pathlib import Path
 import numpy as np
 
 from . import PHASES
-from .io import crop, list_slices, normalise, normalise_phases, read_labels, read_slice, write_labels
+from .io import (DEFAULT_MODEL_PIXEL_NM, crop, list_slices, normalise, normalise_phases, read_labels,
+                 read_pixel_size, read_slice, resample, resample_labels, write_labels)
 from .features import DEFAULT_SIGMAS
 from .model import TrainingSet, load_model, predict, save_model, train
 from .postprocess import clean_labels, phase_fractions, place_solid_edges, pore_level_auto, snap_to_edges, solid_level_auto, trim_pores
@@ -36,6 +37,47 @@ def _norm_args(p):
                    help="'bounds': linear map with --lo/--hi (or per-slice percentiles); 'phase': per-slice map that puts the pore and LLZTO medians on the training scale (robust to drift along z and to other stacks)")
     p.add_argument("--crop", type=int, nargs=4, metavar=("Y0", "Y1", "X0", "X1"), default=None,
                    help="crop every slice to rows Y0:Y1 and columns X0:X1 before processing (pixel indices, end exclusive)")
+    p.add_argument("--pixel-size", default="auto", metavar="NM",
+                   help="in-plane pixel size of the slices in nm, or 'auto' (read from the TESCAN/TIFF metadata). "
+                        "predict/review resample each slice to the model's pixel size, segment it there and "
+                        "return the labels on the slice's own pixel grid; train stores it in the model")
+
+
+def _pixel_size(arg, path):
+    """Resolve --pixel-size for one slice: a number, or 'auto' (metadata; None if absent)."""
+    if arg is None or str(arg).lower() == "auto":
+        return read_pixel_size(path)
+    return float(arg)
+
+
+def _model_pixel_size(norm: dict) -> float:
+    return float(norm.get("pixel_size_nm") or DEFAULT_MODEL_PIXEL_NM)
+
+
+def segment(rf, sigmas, im, a, in_px=None, model_px=None):
+    """Classify and post-process one normalised slice.
+
+    If the slice's pixel size *in_px* differs from the model's *model_px* (both
+    nm), the slice is resampled to the model's pixel size first (the features,
+    --band and --min-size are in model pixels), and the labels and
+    probabilities are resampled back to the slice's own grid by an
+    area-weighted vote.  Returns (labels, probabilities, scale).
+    """
+    scale = 1.0
+    if in_px and model_px and abs(in_px / model_px - 1) > 0.02:
+        scale = in_px / model_px
+    if scale == 1.0:
+        lab, proba = predict(rf, im, sigmas)
+        return _postprocess(lab, im, a), proba, scale
+    shape = im.shape
+    work = (max(1, round(shape[0] * scale)), max(1, round(shape[1] * scale)))
+    im_w = np.clip(resample(im, work), 0.0, 1.0)
+    lab, proba = predict(rf, im_w, sigmas)
+    lab = _postprocess(lab, im_w, a)
+    lab = resample_labels(lab, shape, classes=tuple(int(c) for c in rf.classes_))
+    proba = np.stack([resample(proba[..., i], shape) for i in range(proba.shape[-1])], axis=-1)
+    proba /= np.clip(proba.sum(-1, keepdims=True), 1e-6, None)
+    return lab, proba, scale
 
 
 def _load_norm(path, lo, hi, smooth=None, norm="bounds", box=None):
@@ -127,8 +169,10 @@ def cmd_train(a):
     mf = None if mf == "all" else (float(mf) if mf.replace(".", "", 1).isdigit() else mf)
     rf = train(ts, n_estimators=a.trees, max_depth=a.max_depth, max_features=mf)
     print(f"[train] {len(ts.arrays()[1])} samples, {a.trees} trees, {time.time() - t0:.1f}s, OOB accuracy {rf.oob_score_:.4f}")
-    save_model(rf, a.model, sigmas=sigmas, norm={"lo": a.lo, "hi": a.hi, "smooth": a.smooth, "norm": a.norm or "bounds"})
-    print(f"[train] saved {a.model}")
+    px = _pixel_size(a.pixel_size, a.image[0]) or DEFAULT_MODEL_PIXEL_NM
+    save_model(rf, a.model, sigmas=sigmas, norm={"lo": a.lo, "hi": a.hi, "smooth": a.smooth, "norm": a.norm or "bounds",
+                                                  "pixel_size_nm": px})
+    print(f"[train] saved {a.model} (pixel size {px:g} nm)")
 
 
 def _postprocess(lab, im, a):
@@ -149,11 +193,12 @@ def cmd_predict(a):
     smooth = a.smooth if a.smooth is not None else norm.get("smooth")
     mode = a.norm or norm.get("norm", "bounds")
     box = tuple(a.crop) if a.crop else None
+    model_px = _model_pixel_size(norm)
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     files = list_slices(a.input)
     if not files:
         sys.exit(f"no .tif/.tiff slices found in {a.input}")
-    print(f"[predict] {len(files)} slices from {a.input}; norm={mode} lo={lo} hi={hi}; pre-smooth={smooth}; crop={box}")
+    print(f"[predict] {len(files)} slices from {a.input}; norm={mode} lo={lo} hi={hi}; pre-smooth={smooth}; crop={box}; model pixel size {model_px:g} nm, slices {a.pixel_size}")
     (out / "labels").mkdir(exist_ok=True)
     phase_dirs = {}
     if a.per_phase:
@@ -164,11 +209,19 @@ def cmd_predict(a):
     stacks = {k: [] for k in list(PHASES) + [0]} if a.stack else None
     summary = {}
     t_start = time.time()
+    last_px = None
     for i, f in enumerate(files, 1):
         if a.overwrite or not (out / "labels" / f"{f.stem}_labels.tif").exists():
             im = _load_norm(f, lo, hi, smooth, mode, box)
-            lab, proba = predict(rf, im, sigmas)
-            lab = _postprocess(lab, im, a)
+            in_px = _pixel_size(a.pixel_size, f)
+            if in_px is None and i == 1:
+                print(f"[predict] no pixel size in the metadata of {f.name}; assuming the model's {model_px:g} nm "
+                      "(pass --pixel-size NM if that is wrong)")
+            lab, proba, scale = segment(rf, sigmas, im, a, in_px, model_px)
+            if scale != 1.0 and (i == 1 or in_px != last_px):
+                print(f"[predict] slice pixel size {in_px:g} nm vs model {model_px:g} nm: segmenting at x{scale:.3g} "
+                      "and voting the labels back to the slice grid")
+            last_px = in_px
             write_labels(out / "labels" / f"{f.stem}_labels.tif", lab)
             if a.save_proba:
                 np.save(out / f"{f.stem}_proba.npy", proba)
@@ -208,8 +261,10 @@ def cmd_review(a):
     smooth = a.smooth if a.smooth is not None else norm.get("smooth")
     mode = a.norm or norm.get("norm", "bounds")
     im = _load_norm(a.image, lo, hi, smooth, mode, tuple(a.crop) if a.crop else None)
-    lab, proba = predict(rf, im, sigmas)
-    lab = _postprocess(lab, im, a)
+    in_px, model_px = _pixel_size(a.pixel_size, a.image), _model_pixel_size(norm)
+    lab, proba, scale = segment(rf, sigmas, im, a, in_px, model_px)
+    if scale != 1.0:
+        print(f"[review] slice pixel size {in_px:g} nm vs model {model_px:g} nm: segmented at x{scale:.3g}")
     scr = load_scribbles(a.scribbles, im.shape) if a.scribbles else None
     region = tuple(a.region) if a.region else None
     fr = phase_fractions(lab)
