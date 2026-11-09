@@ -494,3 +494,7 @@ slices) gave no gain with two training slices. In 3D the 25 px length limit cost
 the same). `rf_cracks_v6_all` finds more cracks but also false alarms in the fine-particle regions and at LLZTO.
 The annotations are incomplete, so the false-alarm rate is not measured; complete annotations of a few regions
 are the next step. `scripts/segment_lco70_cycled.sh` now defaults to `rf_cracks_v6` and growth 0.15.
+
+## Session notes
+
+- [LCO70 cycled crack analysis (Nov 2026)](docs/notes/2026-11-09-LCO70-cycled-crack-analysis.md): what was tried and found on crack detection, LCO connectivity and tortuosity, open runs with commands.
