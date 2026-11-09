@@ -1,0 +1,163 @@
+# =============================================================================
+# Workstation run on ALREADY SEGMENTED volumes.
+#
+# Each sample is a folder with one binary TIFF stack per phase (non-zero = phase
+# present): pores.tiff, LCO.tiff, LLZTO.tiff. The segment stage imports and
+# combines them into labels.npy instead of thresholding grey levels; every later
+# stage (connectivity, surface, tortuosity, grains, profiles, report) runs exactly
+# as in config/workstation.yaml.
+#
+# Samples (checked 2026-09-26; mask file names are case-sensitive on Linux):
+#   LCO50  segmented_LCO50   700 x 700 x 1700  pores/LCO/LLZTO.tiff   no overlap, 0.9 % uncovered
+#   LCO60  segmented_LCO60  701 x 700 x 1702  pores/lco/llzto.tiff   no overlap, 2.5 % uncovered
+#   LCO70  segmented_LCO70   701 x 700 x 1700  pores/lco/llzto.tiff   0.5 % pores/lco overlap
+#                                                                    (1-15 px speckles), 2.8 % uncovered
+# All are cropped to the same 700 x 700 x 1700 analysis volume (50 nm voxels).
+# Uncovered voxels get the majority phase of their neighbours; overlapping
+# voxels go to the first phase in segmentation.masks.priority (LCO70: to lco).
+# Both counts are written to <sample>/segment.json. To add a sample copy a block
+# below; with analysis_volume.enforce = true its crop must span 700 x 700 x 1700.
+#
+# Memory at 833 Mvoxel per sample: segment ~1.7 GB, connectivity ~5 GB,
+# surface ~4 GB, grains ~11 GB at downsample 2 (~85 GB at 1), tortuosity on GPU
+# ~2 GB at downsample 2. Raise/lower the two stage-level `downsample` values to
+# match the workstation.
+# =============================================================================
+schema_version: 1
+
+project:
+  name: lco_llzto_composite_cathodes_segmented
+  description: "Pre-segmented LCO/LLZTO/pore stacks: LCO50, LCO60, LCO70; identical analysis volume; pores = volume fraction only"
+
+paths:
+  data_root: "../.."                          # folder that holds segmented_LCO50/
+  output_root: "../results_segmented"
+  log_dir: "../results_segmented/logs"
+
+runtime:
+  log_level: INFO
+  n_workers: 8
+  device: auto                    # cuda when a torch CUDA build is installed
+  memory_log: true
+  label_format: npy
+  random_seed: 0
+
+voxel:
+  size_nm: 50.0
+  through_thickness_axis: y       # image rows: collector side at the top (y_min), separator side at the bottom
+  current_collector_face: min
+
+analysis_volume:
+  shape_zyx: [700, 700, 1700]     # full extent of the LCO50 masks
+  enforce: true
+
+samples:
+  - name: LCO50
+    nominal_lco_vol_fraction: 0.50
+    input_dir: segmented_LCO50
+    masks:                        # file name (or glob) per phase, relative to input_dir; non-zero = phase
+      pore: pores.tiff
+      lco: LCO.tiff
+      llzto: LLZTO.tiff
+    slice_range: [null, null]
+    crop: {z: [0, 700], y: [0, 700], x: [0, 1700]}
+    downsample: 1
+    overrides: {}
+
+  - name: LCO60
+    nominal_lco_vol_fraction: 0.60
+    input_dir: segmented_LCO60
+    masks:
+      pore: pores.tiff
+      lco: lco.tiff
+      llzto: llzto.tiff
+    slice_range: [null, null]
+    crop: {z: [0, 700], y: [0, 700], x: [1, 1701]}    # stack is 701 x 700 x 1702
+    downsample: 1
+    overrides: {}
+
+  - name: LCO70
+    nominal_lco_vol_fraction: 0.70
+    input_dir: segmented_LCO70
+    masks:
+      pore: pores.tiff
+      lco: lco.tiff
+      llzto: llzto.tiff
+    slice_range: [null, null]
+    crop: {z: [0, 700], y: [0, 700], x: [0, 1700]}    # stack is 701 x 700 x 1700
+    downsample: 1
+    overrides: {}                 # e.g. {segmentation: {masks: {priority: [llzto, pore, lco]}}} to give pores the overlap
+
+segmentation:
+  # ---- used only for samples that provide `masks` -------------------------
+  masks:
+    priority: [llzto, lco, pore]  # where masks overlap, the first listed phase wins
+    unassigned: majority          # majority | pore | lco | llzto  - voxels covered by no mask
+    postprocess: false            # true = also run the island removal / hole filling below
+  # ---- grey-level parameters below are ignored for mask samples ----------
+  normalize: {method: percentile, percentiles: [0.1, 99.9], per_slice: false}
+  preprocess: {filter: none, sigma: 1.0, size: 3, in_3d: true}
+  thresholds: {method: multi_otsu, n_classes: 3, manual: [null, null], histogram_subsample: 8}
+  intensity_order: [pore, lco, llzto]
+  postprocess:
+    min_object_voxels: {pore: 27, lco: 125, llzto: 125}
+    fill_holes: {enabled: true, max_voxels: 1000}
+    majority_filter_radius: 0
+    chunk_z: 96                   # z-chunk size for the neighbour-majority fill and clean-up
+    chunk_margin: 16
+  qc: {overlay_slices: [0.25, 0.5, 0.75], save_histogram: false}
+
+connectivity:
+  structure: 6
+  reference_faces: {lco: [collector], llzto: [separator]}   # no pore entry -> pore connectivity not analysed
+  report_largest_n_clusters: 10
+  save_connected_labels: true
+
+surface:
+  method: marching_cubes
+  marching_cubes: {smoothing_sigma: 0.7, step_size: 1}
+  voxel_faces: {correction_factor: 0.667}
+  interfaces: [[lco, llzto]]                                # active interface = both sides connected
+  active_requires_connected: true
+  chunk_z: 48
+
+tortuosity:
+  backend: taufactor
+  phases: [lco, llzto]
+  directions: [y]                 # through-thickness only (current collector -> separator); add x, z if needed
+  use_connected_only: true
+  preserve_volume_fraction: true  # downsampling keeps each phase's volume fraction (majority vote erodes thin LLZTO necks)
+  taufactor:
+    convergence: 0.02             # taufactor conv_crit: max. relative flux mismatch between layers (2 %)
+    max_iterations: 30000
+    check_every: 1000             # log iteration / tau / speed every N iterations
+    max_seconds: 7200             # stop a single solve after this wall time and report the current tau (converged=false); null = no limit
+  porespy: {solver_tol: 1.0e-6}
+  downsample: 2                   # 100 nm voxels (104 Mvoxel): fine on a GPU. On CPU use 4 (13 Mvoxel, ~30x faster, ~2-3 % on tau)
+
+grains:
+  phases: [lco, llzto]
+  method: watershed_hmax          # snow needs porespy; watershed_hmax needs scikit-image only
+  snow: {sigma: 0.4, r_max: 4}
+  watershed_hmax: {h: 2.0}
+  min_grain_voxels: 64
+  measure: {equivalent_diameter: true, sphericity: true, n_bins_size_distribution: 40}
+  downsample: 2                   # 100 nm voxels: ~11 GB RAM; downsample 1 needs ~85 GB
+
+profiles:
+  slab_thickness_um: 1.0
+  quantities: [volume_fraction, connected_fraction, interface_density, grain_count]
+  phases: [pore, lco, llzto]      # pore appears in volume_fraction only
+  normalize_position: true
+
+report:
+  compare_with_nominal: true
+  reference_values_csv: null
+  figures: {format: png, dpi: 200, style: default}
+  tables: {float_format: "%.4f"}
+
+plotting:
+  colors: {pore: "#1f1f1f", lco: "#d95f02", llzto: "#1b9e77"}
+  sample_colors: {LCO50: "#4477aa", LCO60: "#ee6677", LCO60_2: "#aa3377", LCO70: "#228833"}
+  interface_colors: {lco-llzto: "#7570b3", lco-pore: "#e6ab02", llzto-pore: "#66a61e"}
+  overlay_alpha: 0.45

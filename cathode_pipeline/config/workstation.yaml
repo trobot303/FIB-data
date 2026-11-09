@@ -1,0 +1,146 @@
+# =============================================================================
+# Workstation run: all samples at full resolution (50 nm voxels), each cropped to
+# the SAME analysis volume of 500 x 680 x 1680 voxels = 25 x 34 x 84 um (z, y, x),
+# centred in the usable region of every stack.
+#
+# Pores: only the volume fraction is analysed. No pore entry in
+# connectivity.reference_faces, only the LCO-LLZTO interface is measured, and the
+# tortuosity / grain stages run on LCO and LLZTO only.
+#
+# The analysis volume is limited by LCO60_2 (516 slices) and by the 700 x 1700
+# frames of LCO60 / LCO70. Dropping LCO60_2 would allow 700 slices along z.
+#
+# Memory at full resolution (571 Mvoxel per sample): segment ~1.5 GB, connectivity
+# ~4 GB, surface ~3 GB, grains ~60 GB at downsample 1 (set to 2 -> ~8 GB),
+# tortuosity on GPU ~10 GB at downsample 1 (set to 2). Raise/lower the two
+# stage-level `downsample` values to match the workstation.
+# =============================================================================
+schema_version: 1
+
+project:
+  name: lco_llzto_composite_cathodes
+  description: "LCO50 / LCO60 / LCO60_2 / LCO70, identical analysis volume, pores = volume fraction only"
+
+paths:
+  data_root: "../.."
+  output_root: "../results_workstation"
+  log_dir: "../results_workstation/logs"
+
+runtime:
+  log_level: INFO
+  n_workers: 8
+  device: auto                    # cuda when a torch CUDA build is installed
+  memory_log: true
+  label_format: npy
+  random_seed: 0
+
+voxel:
+  size_nm: 50.0
+  through_thickness_axis: y       # image rows: collector side at the top (y_min), separator side at the bottom
+  current_collector_face: min
+
+analysis_volume:
+  shape_zyx: [500, 680, 1680]     # every sample crop below must span exactly this many voxels
+  enforce: true
+
+samples:
+  - name: LCO50
+    nominal_lco_vol_fraction: 0.50
+    input_dir: processed_LCO50
+    pattern: "slice_*.tif"
+    slice_range: [null, null]
+    crop: {z: [239, 739], y: [230, 910], x: [460, 2140]}     # usable: y < 1140 (bright strip below), x < 2600 (bright band right)
+    downsample: 1
+    overrides: {}
+
+  - name: LCO60
+    nominal_lco_vol_fraction: 0.60
+    input_dir: processed_LCO60
+    pattern: "*Kuwahara*.tiff"
+    slice_range: [null, null]
+    crop: {z: [101, 601], y: [10, 690], x: [10, 1690]}
+    downsample: 1
+    overrides: {}
+
+  - name: LCO60_2
+    nominal_lco_vol_fraction: 0.60
+    input_dir: processed_LCO60_2
+    pattern: "slice-*.tif"
+    slice_range: [null, null]
+    crop: {z: [8, 508], y: [375, 1055], x: [620, 2300]}      # usable: y 40..1390, x 320..2600 (dark side bands, bright bottom strip)
+    downsample: 1
+    overrides:
+      segmentation:
+        normalize: {method: percentile, percentiles: [0.1, 99.9], per_slice: true}   # brightness drifts ~30% along z
+
+  - name: LCO70
+    nominal_lco_vol_fraction: 0.70
+    input_dir: processed_LCO70
+    pattern: "*Kuwahara*.tiff"
+    slice_range: [null, null]
+    crop: {z: [100, 600], y: [10, 690], x: [10, 1690]}
+    downsample: 1
+    overrides: {}
+
+segmentation:
+  normalize: {method: percentile, percentiles: [0.1, 99.9], per_slice: false}
+  preprocess: {filter: none, sigma: 1.0, size: 3, in_3d: true}
+  thresholds: {method: multi_otsu, n_classes: 3, manual: [null, null], histogram_subsample: 8}
+  intensity_order: [pore, lco, llzto]      # BSE: pores darkest, LCO grey matrix, LLZTO bright grains
+  postprocess:
+    min_object_voxels: {pore: 27, lco: 125, llzto: 125}
+    fill_holes: {enabled: true, max_voxels: 1000}
+    majority_filter_radius: 0
+    chunk_z: 96
+    chunk_margin: 16
+  qc: {overlay_slices: [0.25, 0.5, 0.75], save_histogram: true}
+
+connectivity:
+  structure: 6
+  reference_faces: {lco: [collector], llzto: [separator]}   # no pore entry -> pore connectivity not analysed
+  report_largest_n_clusters: 10
+  save_connected_labels: true
+
+surface:
+  method: marching_cubes
+  marching_cubes: {smoothing_sigma: 0.7, step_size: 1}
+  voxel_faces: {correction_factor: 0.667}
+  interfaces: [[lco, llzto]]                                # active interface = both sides connected
+  active_requires_connected: true
+  chunk_z: 48
+
+tortuosity:
+  backend: taufactor
+  phases: [lco, llzto]
+  directions: [x, y, z]
+  use_connected_only: true
+  taufactor: {convergence: 0.02, max_iterations: 30000, check_every: 100}
+  porespy: {solver_tol: 1.0e-6}
+  downsample: 2                   # 100 nm voxels for the solver; set 1 with >= 16 GB GPU memory
+
+grains:
+  phases: [lco, llzto]
+  method: watershed_hmax          # snow needs porespy; watershed_hmax needs scikit-image only
+  snow: {sigma: 0.4, r_max: 4}
+  watershed_hmax: {h: 2.0}
+  min_grain_voxels: 64
+  measure: {equivalent_diameter: true, sphericity: true, n_bins_size_distribution: 40}
+  downsample: 2                   # 100 nm voxels: ~8 GB RAM; downsample 1 needs ~60 GB
+
+profiles:
+  slab_thickness_um: 1.0
+  quantities: [volume_fraction, connected_fraction, interface_density, grain_count]
+  phases: [pore, lco, llzto]      # pore appears in volume_fraction only
+  normalize_position: true
+
+report:
+  compare_with_nominal: true
+  reference_values_csv: null
+  figures: {format: png, dpi: 200, style: default}
+  tables: {float_format: "%.4f"}
+
+plotting:
+  colors: {pore: "#1f1f1f", lco: "#d95f02", llzto: "#1b9e77"}
+  sample_colors: {LCO50: "#4477aa", LCO60: "#ee6677", LCO60_2: "#aa3377", LCO70: "#228833"}
+  interface_colors: {lco-llzto: "#7570b3", lco-pore: "#e6ab02", llzto-pore: "#66a61e"}
+  overlay_alpha: 0.45

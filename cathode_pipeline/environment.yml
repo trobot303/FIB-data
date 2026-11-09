@@ -1,0 +1,16 @@
+# Miniforge / conda environment for cathode_analysis.
+#   mamba env create -f environment.yml      (or: conda env create -f environment.yml)
+#   mamba activate cathode
+# The pinned Python packages come from requirements.txt via pip, so the versions
+# are identical to the venv-based run_all scripts.
+# GPU: after activating, install a CUDA torch BEFORE anything else, e.g.
+#   pip install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu121
+# then `pip install -r requirements.txt` keeps that torch.
+name: cathode
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - -r requirements.txt
