@@ -457,3 +457,7 @@ field 109 x 46 um; the 1001 x 1001 px crop is 50 x 50 um. LCO50 cycled ds_2 (A97
 isotropic, crop 20 x 20 um. LCO70 cycled: 20 nm pixels, 50 nm slices. The pixel-based noise filters (6 px islands, 12 px
 line filter, width refinement) stay in pixels; the crack length limit is kept at 0.5 um in all samples (10 px for ds_1,
 25 px for ds_2 and LCO70). `crack_stats.py` takes `--px-um 0.05` for ds_1.
+
+## Session notes
+
+- [2026-11-09: crack segmentation of cycled LCO50/LCO70](docs/notes/2026-11-09-crack-segmentation-cycled-cathodes.md): full summary of the work, paths on the Mac, results and open items, for continuing in a new chat.
